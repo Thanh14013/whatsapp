@@ -1,3 +1,285 @@
+# ===================================================================
+# WhatsApp Clone - API Gateway Configuration
+# ===================================================================
+
+# ===================================================================
+# Server Configuration
+# ===================================================================
+server:
+  port: 8080
+  shutdown: graceful
+  netty:
+    # Connection timeout
+    connection-timeout: 30s
+    # Idle timeout for connections
+    idle-timeout: 60s
+
+# ===================================================================
+# Spring Application Configuration
+# ===================================================================
 spring:
   application:
-    name: gateway
+    name: api-gateway
+  
+  # ===================================================================
+  # Cloud Gateway Configuration
+  # ===================================================================
+  cloud:
+    gateway:
+      # Global CORS Configuration
+      globalcors:
+        cors-configurations:
+          '[/**]':
+            allowedOriginPatterns: "*"
+            allowedMethods:
+              - GET
+              - POST
+              - PUT
+              - DELETE
+              - OPTIONS
+              - PATCH
+            allowedHeaders: "*"
+            allowCredentials: true
+            maxAge: 3600
+      
+      # Default filters applied to all routes
+      default-filters:
+        - name: Retry
+          args:
+            retries: 3
+            statuses: BAD_GATEWAY,SERVICE_UNAVAILABLE
+            methods: GET,POST
+            backoff:
+              firstBackoff: 100ms
+              maxBackoff: 1000ms
+              factor: 2
+              basedOnPreviousValue: true
+
+        - name: CircuitBreaker
+          args:
+            name: defaultCircuitBreaker
+            fallbackUri: forward:/fallback/service-unavailable
+
+        - name: RequestRateLimiter
+          args:
+            redis-rate-limiter:
+              replenishRate: 10
+              burstCapacity: 20
+              requestedTokens: 1
+      
+      # Route definitions
+      routes:
+        # User Service Routes
+        - id: user-service
+          uri: http://user-service:8081
+          predicates:
+            - Path=/api/users/**,/api/auth/**
+          filters:
+            - StripPrefix=1
+            - name: CircuitBreaker
+              args:
+                name: userServiceCircuitBreaker
+                fallbackUri: forward:/fallback/user-service
+        
+        # Chat Service Routes - REST
+        - id: chat-service-rest
+          uri: http://chat-service:8082
+          predicates:
+            - Path=/api/chat/**,/api/messages/**
+          filters:
+            - StripPrefix=1
+            - name: CircuitBreaker
+              args:
+                name: chatServiceCircuitBreaker
+                fallbackUri: forward:/fallback/chat-service
+        
+        # Chat Service Routes - WebSocket
+        - id: chat-service-websocket
+          uri: ws://chat-service:8082
+          predicates:
+            - Path=/ws/**
+          filters:
+            - StripPrefix=0
+      
+      # HTTP client configuration
+      httpclient:
+        # Connection pool settings
+        pool:
+          type: ELASTIC
+          max-connections: 100
+          max-idle-time: 30s
+        
+        # Connection timeout
+        connect-timeout: 5000
+        
+        # Response timeout
+        response-timeout: 10s
+        
+        # Enable wiretap for debugging (disable in production)
+        wiretap: false
+      
+      # Discovery locator (for service discovery)
+      discovery:
+        locator:
+          enabled: false
+
+  # ===================================================================
+  # Redis Configuration (for rate limiting and caching)
+  # ===================================================================
+  data:
+    redis:
+      host: redis
+      port: 6379
+      password:
+      database: 0
+      timeout: 3000ms
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 8
+          min-idle: 2
+          max-wait: -1ms
+        shutdown-timeout: 100ms
+
+# ===================================================================
+# JWT Configuration
+# ===================================================================
+jwt:
+  secret: ${JWT_SECRET:your-256-bit-secret-your-256-bit-secret-your-256-bit-secret-your-256-bit-secret}
+  expiration: 86400000 # 24 hours in milliseconds
+
+# ===================================================================
+# Management & Actuator Configuration
+# ===================================================================
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+      base-path: /actuator
+  
+  endpoint:
+    health:
+      show-details: when-authorized
+      probes:
+        enabled: true
+  
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
+    redis:
+      enabled: true
+  
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+  
+  tracing:
+    sampling:
+      probability: 1.0
+
+# ===================================================================
+# Logging Configuration
+# ===================================================================
+logging:
+  level:
+    root: INFO
+    com.whatsapp.gateway: DEBUG
+    org.springframework.cloud.gateway: DEBUG
+    org.springframework.security: DEBUG
+    reactor.netty: INFO
+  
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+  
+  file:
+    name: logs/api-gateway.log
+    max-size: 10MB
+    max-history: 30
+
+# ===================================================================
+# Resilience4j Circuit Breaker Configuration
+# ===================================================================
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        # Sliding window size
+        sliding-window-size: 100
+        # Minimum number of calls before circuit breaker can open
+        minimum-number-of-calls: 10
+        # Failure rate threshold percentage
+        failure-rate-threshold: 50
+        # Wait duration in open state before switching to half-open
+        wait-duration-in-open-state: 60s
+        # Permitted number of calls in half-open state
+        permitted-number-of-calls-in-half-open-state: 5
+        # Automatically transition from open to half-open
+        automatic-transition-from-open-to-half-open-enabled: true
+        # Sliding window type
+        sliding-window-type: COUNT_BASED
+    
+    instances:
+      userServiceCircuitBreaker:
+        base-config: default
+      
+      chatServiceCircuitBreaker:
+        base-config: default
+  
+  timelimiter:
+    configs:
+      default:
+        timeout-duration: 10s
+
+# ===================================================================
+# Application-Specific Configuration
+# ===================================================================
+app:
+  # Rate limiting configuration
+  rate-limit:
+    anonymous:
+      capacity: 10
+      refill-rate: 10
+      refill-period: 1m
+    
+    authenticated:
+      capacity: 100
+      refill-rate: 100
+      refill-period: 1m
+    
+    premium:
+      capacity: 500
+      refill-rate: 500
+      refill-period: 1m
+    
+    websocket:
+      capacity: 50
+      refill-rate: 50
+      refill-period: 1m
+  
+  # Security configuration
+  security:
+    cors:
+      allowed-origins:
+        - "http://localhost:3000"
+        - "http://localhost:4200"
+      allowed-methods:
+        - GET
+        - POST
+        - PUT
+        - DELETE
+        - OPTIONS
+        - PATCH
+      allowed-headers: "*"
+      exposed-headers:
+        - Authorization
+        - X-Total-Count
+      allow-credentials: true
+      max-age: 3600
