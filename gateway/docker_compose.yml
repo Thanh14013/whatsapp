@@ -1,0 +1,340 @@
+version: '3.8'
+
+# ===================================================================
+# WhatsApp Clone - Docker Compose Configuration
+# For Local Development with Docker Desktop
+# ===================================================================
+
+services:
+  # ===================================================================
+  # Infrastructure Services
+  # ===================================================================
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: whatsapp-postgres
+    environment:
+      POSTGRES_DB: whatsapp
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password123
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infrastructure/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - whatsapp-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d whatsapp"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # MongoDB Database
+  mongodb:
+    image: mongo:6
+    container_name: whatsapp-mongodb
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: password123
+      MONGO_INITDB_DATABASE: whatsapp
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+      - ./infrastructure/mongodb/init-mongo.js:/docker-entrypoint-initdb.d/init-mongo.js
+    networks:
+      - whatsapp-network
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/whatsapp --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: whatsapp-redis
+    command: redis-server --appendonly yes --requirepass password123
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - whatsapp-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # RabbitMQ Message Queue
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: whatsapp-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: password123
+      RABBITMQ_DEFAULT_VHOST: /
+    ports:
+      - "5672:5672"   # AMQP port
+      - "15672:15672" # Management UI
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+      - ./infrastructure/rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf
+    networks:
+      - whatsapp-network
+    healthcheck:
+      test: rabbitmq-diagnostics -q ping
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+
+  # ===================================================================
+  # Application Services
+  # ===================================================================
+
+  # API Gateway
+  api-gateway:
+    build:
+      context: .
+      dockerfile: api-gateway/Dockerfile
+    image: whatsapp-clone/api-gateway:latest
+    container_name: whatsapp-api-gateway
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      SERVER_PORT: 8080
+      # Redis Configuration
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      SPRING_DATA_REDIS_PASSWORD: password123
+      # JWT Configuration
+      JWT_SECRET: your-super-secret-jwt-signing-key-change-this-in-production-must-be-at-least-256-bits
+      JWT_EXPIRATION: 86400000
+      # Service URLs
+      USER_SERVICE_URL: http://user-service:8081
+      CHAT_SERVICE_URL: http://chat-service:8082
+    ports:
+      - "8080:8080"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - whatsapp-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+    labels:
+      com.whatsapp.service: "api-gateway"
+      com.whatsapp.version: "1.0.0"
+
+  # User Service
+  user-service:
+    build:
+      context: .
+      dockerfile: user-service/Dockerfile
+    image: whatsapp-clone/user-service:latest
+    container_name: whatsapp-user-service
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      SERVER_PORT: 8081
+      # PostgreSQL Configuration
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/whatsapp
+      SPRING_DATASOURCE_USERNAME: admin
+      SPRING_DATASOURCE_PASSWORD: password123
+      # Redis Configuration
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      SPRING_DATA_REDIS_PASSWORD: password123
+      # RabbitMQ Configuration
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: admin
+      SPRING_RABBITMQ_PASSWORD: password123
+      # JWT Configuration
+      JWT_SECRET: your-super-secret-jwt-signing-key-change-this-in-production-must-be-at-least-256-bits
+    ports:
+      - "8081:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - whatsapp-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+    labels:
+      com.whatsapp.service: "user-service"
+      com.whatsapp.version: "1.0.0"
+
+  # Chat Service
+  chat-service:
+    build:
+      context: .
+      dockerfile: chat-service/Dockerfile
+    image: whatsapp-clone/chat-service:latest
+    container_name: whatsapp-chat-service
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      SERVER_PORT: 8082
+      # PostgreSQL Configuration (for metadata)
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/whatsapp
+      SPRING_DATASOURCE_USERNAME: admin
+      SPRING_DATASOURCE_PASSWORD: password123
+      # MongoDB Configuration (for messages)
+      SPRING_DATA_MONGODB_URI: mongodb://admin:password123@mongodb:27017/whatsapp?authSource=admin
+      # Redis Configuration
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      SPRING_DATA_REDIS_PASSWORD: password123
+      # RabbitMQ Configuration
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: admin
+      SPRING_RABBITMQ_PASSWORD: password123
+    ports:
+      - "8082:8082"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - whatsapp-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+    labels:
+      com.whatsapp.service: "chat-service"
+      com.whatsapp.version: "1.0.0"
+
+  # Message Processor Service
+  message-processor:
+    build:
+      context: .
+      dockerfile: message-processor-service/Dockerfile
+    image: whatsapp-clone/message-processor:latest
+    container_name: whatsapp-message-processor
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      # MongoDB Configuration
+      SPRING_DATA_MONGODB_URI: mongodb://admin:password123@mongodb:27017/whatsapp?authSource=admin
+      # Redis Configuration
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      SPRING_DATA_REDIS_PASSWORD: password123
+      # RabbitMQ Configuration
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: admin
+      SPRING_RABBITMQ_PASSWORD: password123
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - whatsapp-network
+    restart: unless-stopped
+    labels:
+      com.whatsapp.service: "message-processor"
+      com.whatsapp.version: "1.0.0"
+
+  # ===================================================================
+  # Monitoring Services (Optional)
+  # ===================================================================
+
+  # Prometheus (Metrics Collection)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: whatsapp-prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    networks:
+      - whatsapp-network
+    restart: unless-stopped
+    profiles:
+      - monitoring
+
+  # Grafana (Metrics Visualization)
+  grafana:
+    image: grafana/grafana:latest
+    container_name: whatsapp-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin123
+      GF_SERVER_ROOT_URL: http://localhost:3000
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+    depends_on:
+      - prometheus
+    networks:
+      - whatsapp-network
+    restart: unless-stopped
+    profiles:
+      - monitoring
+
+# ===================================================================
+# Networks
+# ===================================================================
+networks:
+  whatsapp-network:
+    driver: bridge
+    name: whatsapp-network
+
+# ===================================================================
+# Volumes
+# ===================================================================
+volumes:
+  postgres_data:
+    name: whatsapp-postgres-data
+  mongodb_data:
+    name: whatsapp-mongodb-data
+  redis_data:
+    name: whatsapp-redis-data
+  rabbitmq_data:
+    name: whatsapp-rabbitmq-data
+  prometheus_data:
+    name: whatsapp-prometheus-data
+  grafana_data:
+    name: whatsapp-grafana-data
