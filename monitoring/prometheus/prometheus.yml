@@ -1,0 +1,190 @@
+# Prometheus Configuration for WhatsApp Clone
+# Scrapes metrics from all microservices and infrastructure components
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: "whatsapp-docker"
+    environment: "local"
+
+# Alertmanager configuration (optional)
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets:
+#           - alertmanager:9093
+
+# Rule files for alerting
+# rule_files:
+#   - "alerts/*.yml"
+
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+        labels:
+          service: "prometheus"
+          type: "monitoring"
+
+  #============================================================================
+  # Microservices - Spring Boot Actuator Metrics
+  #============================================================================
+
+  # API Gateway
+  - job_name: "gateway"
+    metrics_path: "/actuator/prometheus"
+    scrape_interval: 10s
+    static_configs:
+      - targets: ["gateway:8080"]
+        labels:
+          service: "gateway"
+          type: "microservice"
+          layer: "api-gateway"
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: "gateway"
+
+  # User Service
+  - job_name: "user-service"
+    metrics_path: "/actuator/prometheus"
+    scrape_interval: 10s
+    static_configs:
+      - targets: ["user-service:8081"]
+        labels:
+          service: "user"
+          type: "microservice"
+          layer: "business"
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: "user-service"
+
+  # Chat Service
+  - job_name: "chat-service"
+    metrics_path: "/actuator/prometheus"
+    scrape_interval: 10s
+    static_configs:
+      - targets: ["chat-service:8082"]
+        labels:
+          service: "chat"
+          type: "microservice"
+          layer: "business"
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: "chat-service"
+
+  # Notification Service
+  - job_name: "notification-service"
+    metrics_path: "/api/v1/actuator/prometheus"
+    scrape_interval: 10s
+    static_configs:
+      - targets: ["notification-service:8084"]
+        labels:
+          service: "notification"
+          type: "microservice"
+          layer: "business"
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: "notification-service"
+
+  # Message Processor Service
+  - job_name: "message-processor"
+    metrics_path: "/actuator/prometheus"
+    scrape_interval: 10s
+    static_configs:
+      - targets: ["message-processor:8085"]
+        labels:
+          service: "message-processor"
+          type: "microservice"
+          layer: "processing"
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: "message-processor"
+
+  # Scheduled Jobs Service
+  - job_name: "scheduled-jobs"
+    metrics_path: "/actuator/prometheus"
+    scrape_interval: 30s
+    static_configs:
+      - targets: ["scheduled-jobs:8086"]
+        labels:
+          service: "scheduled-jobs"
+          type: "microservice"
+          layer: "background"
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: "scheduled-jobs"
+
+  #============================================================================
+  # Infrastructure Components
+  #============================================================================
+
+  # PostgreSQL Exporter (requires postgres_exporter sidecar)
+  # - job_name: 'postgresql'
+  #   static_configs:
+  #     - targets: ['postgres-exporter:9187']
+  #       labels:
+  #         service: 'postgresql'
+  #         type: 'database'
+
+  # MongoDB Exporter (requires mongodb_exporter sidecar)
+  # - job_name: 'mongodb'
+  #   static_configs:
+  #     - targets: ['mongodb-exporter:9216']
+  #       labels:
+  #         service: 'mongodb'
+  #         type: 'database'
+
+  # Redis Exporter (requires redis_exporter sidecar)
+  # - job_name: 'redis'
+  #   static_configs:
+  #     - targets: ['redis-exporter:9121']
+  #       labels:
+  #         service: 'redis'
+  #         type: 'cache'
+
+  # RabbitMQ Management Plugin Metrics
+  - job_name: "rabbitmq"
+    metrics_path: "/api/metrics"
+    scrape_interval: 15s
+    static_configs:
+      - targets: ["rabbitmq:15672"]
+        labels:
+          service: "rabbitmq"
+          type: "message-queue"
+    basic_auth:
+      username: "whatsapp"
+      password: "whatsapp123"
+
+  # Nginx Exporter (requires nginx-prometheus-exporter)
+  # - job_name: 'nginx'
+  #   static_configs:
+  #     - targets: ['nginx-exporter:9113']
+  #       labels:
+  #         service: 'nginx'
+  #         type: 'load-balancer'
+
+  #============================================================================
+  # System Metrics (Optional - requires node-exporter)
+  #============================================================================
+
+  # - job_name: 'node-exporter'
+  #   static_configs:
+  #     - targets: ['node-exporter:9100']
+  #       labels:
+  #         type: 'system'
+
+# Remote write configuration (for long-term storage)
+# remote_write:
+#   - url: http://remote-prometheus:9090/api/v1/write
+
+# Remote read configuration
+# remote_read:
+#   - url: http://remote-prometheus:9090/api/v1/read

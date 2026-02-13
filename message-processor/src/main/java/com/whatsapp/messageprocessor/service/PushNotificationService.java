@@ -1,4 +1,4 @@
-package com.whatsapp.processor.service;
+package com.whatsapp.messageprocessor.service;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

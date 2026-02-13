@@ -1,7 +1,7 @@
-package com.whatsapp.processor.consumer;
+package com.whatsapp.messageprocessor.consumer;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.whatsapp.processor.processor.MessageDeliveryProcessor;
+import com.whatsapp.messageprocessor.processor.MessageDeliveryProcessor;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

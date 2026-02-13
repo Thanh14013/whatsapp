@@ -156,6 +156,17 @@ log/
 
 # Docker
 .dockerignore
+docker-compose.override.yml
+.env
+
+# Docker volumes and data
+**/postgres-data/
+**/mongodb-data/
+**/redis-data/
+**/rabbitmq-data/
+**/prometheus-data/
+**/grafana-data/
+**/elasticsearch-data/
 
 # Kubernetes secrets (if any)
 secrets/

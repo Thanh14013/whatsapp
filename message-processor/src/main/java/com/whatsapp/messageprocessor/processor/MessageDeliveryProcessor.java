@@ -1,8 +1,8 @@
-package com.whatsapp.processor.processor;
+package com.whatsapp.messageprocessor.processor;
 
-import com.whatsapp.processor.service.InboxCacheService;
-import com.whatsapp.processor.service.PushNotificationService;
-import com.whatsapp.processor.service.UserStatusService;
+import com.whatsapp.messageprocessor.service.InboxCacheService;
+import com.whatsapp.messageprocessor.service.PushNotificationService;
+import com.whatsapp.messageprocessor.service.UserStatusService;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

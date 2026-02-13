@@ -14,15 +14,15 @@ COPY pom.xml .
 # Copy common-lib module
 COPY common-lib ./common-lib
 
-# Copy api-gateway module
-COPY api-gateway/pom.xml ./api-gateway/
-COPY api-gateway/src ./api-gateway/src
+# Copy gateway module
+COPY gateway/pom.xml ./gateway/
+COPY gateway/src ./gateway/src
 
 # Download dependencies (this layer will be cached if pom.xml doesn't change)
-RUN mvn dependency:go-offline -B
+RUN mvn dependency:go-offline -B -pl common-lib,gateway
 
 # Build the application (skip tests for faster builds)
-RUN mvn clean package -DskipTests -pl api-gateway -am
+RUN mvn clean package -DskipTests -pl gateway -am
 
 # ===================================================================
 # Stage 2: Runtime Stage
@@ -46,7 +46,7 @@ RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 WORKDIR /app
 
 # Copy JAR from builder stage
-COPY --from=builder /app/api-gateway/target/api-gateway.jar /app/api-gateway.jar
+COPY --from=builder /app/gateway/target/*.jar /app/gateway-service.jar
 
 # Change ownership to non-root user
 RUN chown -R appuser:appgroup /app
@@ -70,4 +70,4 @@ ENV JAVA_OPTS="-Xms256m -Xmx512m \
                -Dspring.profiles.active=docker"
 
 # Run the application
-ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar /app/api-gateway.jar"]
+ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar /app/gateway-service.jar"]

@@ -1,3 +1,78 @@
 spring:
   application:
     name: message-processor
+  # MongoDB Configuration
+  data:
+    mongodb:
+      host: ${MONGODB_HOST:localhost}
+      port: ${MONGODB_PORT:27017}
+      database: whatsapp_chat
+      username: ${MONGODB_USERNAME:}
+      password: ${MONGODB_PASSWORD:}
+      auto-index-creation: true
+
+    # Redis Configuration
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      database: 1
+      lettuce:
+        pool:
+          max-active: 10
+          max-idle: 5
+          min-idle: 2
+
+  # RabbitMQ Configuration
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USERNAME:guest}
+    password: ${RABBITMQ_PASSWORD:guest}
+    listener:
+      simple:
+        acknowledge-mode: auto
+        concurrency: 3
+        max-concurrency: 10
+        prefetch: 5
+        retry:
+          enabled: true
+          initial-interval: 3000
+          max-attempts: 3
+          multiplier: 2
+
+# Server Configuration
+server:
+  port: ${PORT:8085}
+  servlet:
+    context-path: /
+
+# Application Configuration
+app:
+  rabbitmq:
+    queues:
+      message-sent: message.sent
+      message-delivered: message.delivered
+      message-read: message.read
+
+# Management & Actuator
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+
+# Logging
+logging:
+  level:
+    root: INFO
+    com.whatsapp.messageprocessor: DEBUG
+    org.springframework.amqp: INFO
+    org.springframework.data.mongodb: INFO
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"

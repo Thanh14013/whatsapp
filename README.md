@@ -56,6 +56,7 @@ WhatsApp Clone is a **production-ready, enterprise-grade real-time messaging pla
 ### Functional Requirements
 
 #### ✅ Core Messaging
+
 - [x] **Real-time messaging** via WebSocket
 - [x] **Message delivery tracking** (sent → delivered → read)
 - [x] **Offline message handling** with push notifications
@@ -64,12 +65,14 @@ WhatsApp Clone is a **production-ready, enterprise-grade real-time messaging pla
 - [x] **Undelivered message storage** (1 year)
 
 #### ✅ User Management
+
 - [x] User registration & authentication (JWT)
 - [x] User profile management
 - [x] Online/Offline status tracking
 - [x] Contact management
 
 #### ✅ Advanced Features
+
 - [x] **Message history** retrieval with pagination
 - [x] **Conversation management**
 - [x] **Device token management** (multi-device support)
@@ -118,13 +121,13 @@ WhatsApp Clone is a **production-ready, enterprise-grade real-time messaging pla
 
 ### Service Responsibilities
 
-| Service | Port | Responsibility | Database |
-|---------|------|---------------|----------|
-| **API Gateway** | 8080 | Routing, Auth, Rate Limiting | - |
-| **User Service** | 8081 | User management, Authentication | PostgreSQL + Redis |
-| **Chat Service** | 8082 | Real-time messaging, WebSocket | PostgreSQL + MongoDB + Redis |
-| **Message Processor** | 8083 | Offline message handling | MongoDB + Redis |
-| **Notification Service** | 8084 | Push notifications (FCM) | Redis |
+| Service                  | Port | Responsibility                  | Database                     |
+| ------------------------ | ---- | ------------------------------- | ---------------------------- |
+| **API Gateway**          | 8080 | Routing, Auth, Rate Limiting    | -                            |
+| **User Service**         | 8081 | User management, Authentication | PostgreSQL + Redis           |
+| **Chat Service**         | 8082 | Real-time messaging, WebSocket  | PostgreSQL + MongoDB + Redis |
+| **Message Processor**    | 8083 | Offline message handling        | MongoDB + Redis              |
+| **Notification Service** | 8084 | Push notifications (FCM)        | Redis                        |
 
 ---
 
@@ -182,16 +185,19 @@ Client B                Chat Service              Redis Cache           MongoDB
 #### **Dual Database Architecture**
 
 **PostgreSQL** (ACID Transactions)
+
 - User profiles & authentication
 - Conversation metadata
 - Relationships & contacts
 
 **MongoDB** (High Volume, Scalability)
+
 - Message content (millions/day)
 - Chat history
 - Time-series data
 
 **Redis** (Caching & Speed)
+
 - User online status (5 min TTL)
 - Inbox cache (undelivered messages)
 - Session management
@@ -220,32 +226,32 @@ message.events (exchange)
 
 ### Backend
 
-| Technology | Version | Purpose |
-|-----------|---------|---------|
-| **Java** | 17 | Primary language |
-| **Spring Boot** | 3.2.2 | Application framework |
-| **Spring Cloud Gateway** | 2023.0.0 | API Gateway |
-| **Spring Data JPA** | 3.2.x | ORM for PostgreSQL |
-| **Spring Data MongoDB** | 4.2.x | MongoDB integration |
-| **Spring AMQP** | 3.1.x | RabbitMQ messaging |
-| **Spring WebSocket** | 6.1.x | Real-time communication |
+| Technology               | Version  | Purpose                 |
+| ------------------------ | -------- | ----------------------- |
+| **Java**                 | 17       | Primary language        |
+| **Spring Boot**          | 3.2.2    | Application framework   |
+| **Spring Cloud Gateway** | 2023.0.0 | API Gateway             |
+| **Spring Data JPA**      | 3.2.x    | ORM for PostgreSQL      |
+| **Spring Data MongoDB**  | 4.2.x    | MongoDB integration     |
+| **Spring AMQP**          | 3.1.x    | RabbitMQ messaging      |
+| **Spring WebSocket**     | 6.1.x    | Real-time communication |
 
 ### Databases & Cache
 
-| Technology | Version | Purpose |
-|-----------|---------|---------|
-| **PostgreSQL** | 15 | Primary database (metadata) |
-| **MongoDB** | 7.0 | Message storage |
-| **Redis** | 7.2 | Caching & sessions |
+| Technology     | Version | Purpose                     |
+| -------------- | ------- | --------------------------- |
+| **PostgreSQL** | 15      | Primary database (metadata) |
+| **MongoDB**    | 7.0     | Message storage             |
+| **Redis**      | 7.2     | Caching & sessions          |
 
 ### Infrastructure
 
-| Technology | Version | Purpose |
-|-----------|---------|---------|
-| **RabbitMQ** | 3.12 | Message queue |
-| **Firebase Admin SDK** | 9.2.0 | Push notifications (FCM) |
-| **Docker** | 24.0 | Containerization |
-| **Docker Compose** | 2.23 | Local orchestration |
+| Technology             | Version | Purpose                  |
+| ---------------------- | ------- | ------------------------ |
+| **RabbitMQ**           | 3.12    | Message queue            |
+| **Firebase Admin SDK** | 9.2.0   | Push notifications (FCM) |
+| **Docker**             | 24.0    | Containerization         |
+| **Docker Compose**     | 2.23    | Local orchestration      |
 
 ### Libraries
 
@@ -350,53 +356,78 @@ whatsapp-clone/
 - **Docker & Docker Compose**
 - **Firebase Account** (for push notifications)
 
-### Quick Start (Docker)
+### ⚡ Quick Start (Docker Desktop)
+
+**Get the entire system running in 3 simple steps:**
 
 1. **Clone the repository**
+
 ```bash
 git clone https://github.com/yourusername/whatsapp-clone.git
 cd whatsapp-clone
 ```
 
-2. **Set up Firebase credentials**
+2. **Deploy everything** (builds and starts all 16 containers)
+
 ```bash
-# Download Firebase service account JSON from Firebase Console
-# Project Settings → Service Accounts → Generate New Private Key
-export FIREBASE_CREDENTIALS_PATH=/path/to/firebase-credentials.json
+# Linux/Mac
+chmod +x scripts/*.sh
+./scripts/deploy.sh
+
+# Windows (Git Bash/WSL or PowerShell)
+docker-compose -f infrastructure/docker/docker-compose.yml up -d --build
 ```
 
-3. **Start all services**
+3. **Verify deployment**
+
 ```bash
-cd infrastructure/docker
-docker-compose up -d
+# Check all services are healthy
+./scripts/health-check.sh
+
+# Or manually
+docker ps
 ```
 
-4. **Verify services**
+**🎉 Done! Services are now running:**
+
+- **API Gateway**: http://localhost:8080
+- **Nginx Proxy**: http://localhost
+- **RabbitMQ Management**: http://localhost:15672 (whatsapp/whatsapp123)
+- **Prometheus**: http://localhost:9090
+- **Grafana**: http://localhost:3000 (admin/admin123)
+- **Kibana**: http://localhost:5601
+
+**📖 For detailed setup, troubleshooting, and configuration:** See [Docker Desktop Deployment Guide](docs/deployment/docker-desktop-guide.md)
+
+### Quick Operations
+
 ```bash
-# API Gateway
-curl http://localhost:8080/actuator/health
+# View logs
+./scripts/logs.sh [service-name]
 
-# User Service
-curl http://localhost:8081/actuator/health
+# Start services
+./scripts/start.sh
 
-# Chat Service
-curl http://localhost:8082/actuator/health
+# Stop services
+./scripts/stop.sh
 
-# Message Processor
-curl http://localhost:8083/actuator/health
+# Clean up (remove containers, keep data)
+./scripts/clean.sh
 
-# Notification Service
-curl http://localhost:8084/actuator/health
+# Complete cleanup (remove everything)
+./scripts/clean.sh --volumes
 ```
 
 ### Development Setup
 
 1. **Build all services**
+
 ```bash
 mvn clean install
 ```
 
 2. **Start infrastructure**
+
 ```bash
 # PostgreSQL
 docker run -d -p 5432:5432 --name postgres \
@@ -421,6 +452,7 @@ docker run -d -p 5672:5672 -p 15672:15672 --name rabbitmq \
 ```
 
 3. **Run services individually**
+
 ```bash
 # API Gateway
 mvn spring-boot:run -pl api-gateway
@@ -445,6 +477,7 @@ mvn spring-boot:run -pl notification-service
 ### User Service API
 
 #### Register User
+
 ```http
 POST /users
 Content-Type: application/json
@@ -459,6 +492,7 @@ Content-Type: application/json
 ```
 
 #### Get Current User
+
 ```http
 GET /users/me
 Authorization: Bearer <jwt-token>
@@ -467,11 +501,13 @@ Authorization: Bearer <jwt-token>
 ### Chat Service API (WebSocket)
 
 #### Connect
+
 ```javascript
-const ws = new WebSocket('ws://localhost:8082/ws/chat?userId=user-123');
+const ws = new WebSocket("ws://localhost:8082/ws/chat?userId=user-123");
 ```
 
 #### Send Message
+
 ```json
 {
   "action": "send_message",
@@ -482,6 +518,7 @@ const ws = new WebSocket('ws://localhost:8082/ws/chat?userId=user-123');
 ```
 
 #### Message Received (Server → Client)
+
 ```json
 {
   "type": "incoming_message",
@@ -497,6 +534,7 @@ const ws = new WebSocket('ws://localhost:8082/ws/chat?userId=user-123');
 ### Notification Service API
 
 #### Register Device Token
+
 ```http
 POST /notifications/register
 Content-Type: application/json
@@ -517,17 +555,20 @@ For complete API documentation, visit: [API Docs](./docs/api/)
 ### Resource Estimation
 
 **Users & Traffic:**
+
 - **100M DAU** (Daily Active Users)
 - **20 messages/user/day** average
 - **~23K RPS** average
 - **230K RPS** peak (10x average)
 
 **Storage:**
+
 - **50TB** for 4-month average retention
 - **200 bytes** per message (with metadata)
 - **100M × 20 × 200 × 31 × 4** = ~50TB
 
 **Infrastructure:**
+
 - **10 machines** for WebSocket (1M connections each)
 - **2M concurrent** WebSocket connections
 - **HikariCP** connection pooling (max 10 per service)
@@ -535,23 +576,23 @@ For complete API documentation, visit: [API Docs](./docs/api/)
 ### Optimization Strategies
 
 1. **Caching**
-    - Redis for user status (5 min TTL)
-    - Inbox cache for offline messages
-    - User data cache (1 hour TTL)
+   - Redis for user status (5 min TTL)
+   - Inbox cache for offline messages
+   - User data cache (1 hour TTL)
 
 2. **Database Sharding**
-    - Partition by `user_id` for even distribution
-    - MongoDB sharding for message scaling
+   - Partition by `user_id` for even distribution
+   - MongoDB sharding for message scaling
 
 3. **Async Processing**
-    - RabbitMQ for decoupling
-    - Event-driven architecture
-    - Non-blocking I/O
+   - RabbitMQ for decoupling
+   - Event-driven architecture
+   - Non-blocking I/O
 
 4. **Connection Management**
-    - WebSocket connection pooling
-    - Load balancing across chat servers
-    - Sticky sessions for WebSocket
+   - WebSocket connection pooling
+   - Load balancing across chat servers
+   - Sticky sessions for WebSocket
 
 ---
 
@@ -560,6 +601,7 @@ For complete API documentation, visit: [API Docs](./docs/api/)
 ### Health Checks
 
 All services expose health endpoints:
+
 ```bash
 curl http://localhost:8080/actuator/health
 ```
@@ -589,11 +631,13 @@ curl http://localhost:8082/actuator/prometheus
 ### Logging
 
 All services use structured logging:
+
 ```
 2026-02-13 10:00:00 [main] INFO  c.w.chat.ChatService - Message sent: msg-123
 ```
 
 Logs are stored in:
+
 - `logs/api-gateway.log`
 - `logs/user-service.log`
 - `logs/chat-service.log`
@@ -605,21 +649,25 @@ Logs are stored in:
 ## 🔒 Security
 
 ### Authentication
+
 - **JWT tokens** (24-hour expiration)
 - **Refresh tokens** (7-day expiration)
 - **BCrypt** password hashing (strength 12)
 
 ### Authorization
+
 - **Role-based** access control
 - **User-level** permissions
 - **API Gateway** authentication filter
 
 ### Rate Limiting
+
 - **Bucket4j** implementation
 - **100 requests/minute** per user
 - **Configurable** per endpoint
 
 ### Data Protection
+
 - **TLS/SSL** for all communications
 - **Password policies** (8+ chars, uppercase, lowercase, digit, special)
 - **Account lockout** (5 failed attempts, 15 min)
@@ -629,16 +677,19 @@ Logs are stored in:
 ## 🧪 Testing
 
 ### Unit Tests
+
 ```bash
 mvn test
 ```
 
 ### Integration Tests
+
 ```bash
 mvn verify
 ```
 
 ### Load Testing
+
 ```bash
 # Using Apache Bench
 ab -n 10000 -c 100 http://localhost:8080/users/me
@@ -651,30 +702,35 @@ ab -n 10000 -c 100 http://localhost:8080/users/me
 ### Horizontal Scaling
 
 **Stateless Services** (Easy to scale):
+
 - API Gateway
 - User Service
 - Message Processor
 - Notification Service
 
 **Stateful Service** (Requires coordination):
+
 - Chat Service (WebSocket connections)
-    - Use Redis for session storage
-    - Sticky sessions in load balancer
-    - Connection registry for routing
+  - Use Redis for session storage
+  - Sticky sessions in load balancer
+  - Connection registry for routing
 
 ### Database Scaling
 
 **PostgreSQL:**
+
 - Read replicas for queries
 - Sharding by `user_id`
 - Connection pooling (HikariCP)
 
 **MongoDB:**
+
 - Replica sets (1 primary + 2 secondaries)
 - Sharding by `user_id`
 - Index optimization
 
 **Redis:**
+
 - Master-slave replication
 - Redis Cluster for distribution
 - Separate instances per service
@@ -684,6 +740,7 @@ ab -n 10000 -c 100 http://localhost:8080/users/me
 ## 🐳 Docker Deployment
 
 ### Build Images
+
 ```bash
 # Build all services
 docker build -t whatsapp-clone/api-gateway:latest -f api-gateway/Dockerfile .
@@ -694,6 +751,7 @@ docker build -t whatsapp-clone/notification-service:latest -f notification-servi
 ```
 
 ### Run with Docker Compose
+
 ```bash
 cd infrastructure/docker
 docker-compose up -d
@@ -702,6 +760,7 @@ docker-compose up -d
 ### Environment Variables
 
 Create `.env` file:
+
 ```env
 # Database
 POSTGRES_HOST=postgres
@@ -745,6 +804,7 @@ Contributions are welcome! Please follow these steps:
 5. **Open** a Pull Request
 
 ### Coding Standards
+
 - Follow **DDD** principles
 - Write **unit tests** for all business logic
 - Document **public APIs** with JavaDoc
@@ -781,6 +841,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 🗺️ Roadmap
 
 ### Phase 1 (Current) ✅
+
 - [x] Basic messaging infrastructure
 - [x] User management
 - [x] Real-time WebSocket communication
@@ -788,6 +849,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - [x] Push notifications
 
 ### Phase 2 (Planned)
+
 - [ ] Group chat support
 - [ ] Media messages (images, videos)
 - [ ] Voice/Video calls
@@ -795,6 +857,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - [ ] Message reactions & replies
 
 ### Phase 3 (Future)
+
 - [ ] Stories feature
 - [ ] Status updates
 - [ ] Payment integration
