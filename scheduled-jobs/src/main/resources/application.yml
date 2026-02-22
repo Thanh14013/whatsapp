@@ -1,0 +1,163 @@
+# ===================================================================
+# WhatsApp Clone - Scheduled Jobs Service Configuration
+# ===================================================================
+
+# ===================================================================
+# Server Configuration
+# ===================================================================
+server:
+  port: 8085
+  shutdown: graceful
+
+# ===================================================================
+# Spring Application Configuration
+# ===================================================================
+spring:
+  application:
+    name: scheduled-jobs-service
+
+  # ===================================================================
+  # PostgreSQL Configuration
+  # ===================================================================
+  datasource:
+    url: jdbc:postgresql://localhost:5432/whatsapp
+    username: admin
+    password: password123
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 5
+      minimum-idle: 2
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+
+  # ===================================================================
+  # JPA Configuration
+  # ===================================================================
+  jpa:
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+    show-sql: false
+    hibernate:
+      ddl-auto: none
+    properties:
+      hibernate:
+        format_sql: true
+        use_sql_comments: true
+
+  # ===================================================================
+  # MongoDB Configuration
+  # ===================================================================
+  data:
+    mongodb:
+      uri: mongodb://localhost:27017/whatsapp
+      auto-index-creation: true
+
+    # Redis Configuration
+    redis:
+      host: localhost
+      port: 6379
+      password:
+      database: 4
+      timeout: 3000ms
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 8
+          min-idle: 2
+          max-wait: -1ms
+        shutdown-timeout: 100ms
+
+# ===================================================================
+# Management & Actuator Configuration
+# ===================================================================
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus,scheduledtasks
+      base-path: /actuator
+  
+  endpoint:
+    health:
+      show-details: when-authorized
+      probes:
+        enabled: true
+  
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
+    db:
+      enabled: true
+    mongo:
+      enabled: true
+    redis:
+      enabled: true
+  
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+    tags:
+      application: ${spring.application.name}
+
+# ===================================================================
+# Logging Configuration
+# ===================================================================
+logging:
+  level:
+    root: INFO
+    com.whatsapp.scheduler: DEBUG
+    org.springframework.scheduling: INFO
+  
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+  
+  file:
+    name: logs/scheduled-jobs.log
+    max-size: 10MB
+    max-history: 30
+
+# ===================================================================
+# Application-Specific Configuration
+# ===================================================================
+app:
+  scheduler:
+    # Message cleanup configuration
+    message-cleanup:
+      undelivered-retention-days: 365  # 1 year
+      delivered-retention-days: 90     # 90 days
+      deleted-grace-period-days: 30    # 30 days
+      batch-size: 1000
+    
+    # Cache cleanup configuration
+    cache-cleanup:
+      orphaned-check-interval: 3600000  # 1 hour (milliseconds)
+      statistics-interval: 3600000      # 1 hour
+    
+    # User policy configuration
+    user-policy:
+      inactive-threshold-days: 180      # 6 months
+      deactivated-deletion-days: 30     # 30 days
+      session-expiry-days: 7            # 7 days
+    
+    # Job execution configuration
+    execution:
+      thread-pool-size: 10
+      await-termination-seconds: 60
+      enable-metrics: true
+    
+    # Job schedules (cron expressions)
+    cron:
+      message-cleanup-undelivered: "0 0 2 * * *"      # 2:00 AM daily
+      message-cleanup-delivered: "0 0 3 * * *"        # 3:00 AM daily
+      message-cleanup-deleted: "0 0 4 * * *"          # 4:00 AM daily
+      message-statistics: "0 0 5 * * *"               # 5:00 AM daily
+      user-policy-enforcement: "0 0 6 * * *"          # 6:00 AM daily
+      inactive-user-cleanup: "0 0 7 * * SUN"          # 7:00 AM Sunday
+      deactivated-account-cleanup: "0 0 8 * * *"      # 8:00 AM daily
+      user-statistics: "0 0 9 * * *"                  # 9:00 AM daily
+      cache-cleanup-orphaned: "0 * * * * *"           # Every hour
+      cache-statistics: "0 0 * * * *"                 # Every hour
+      temp-cache-cleanup: "0 0 1 * * *"               # 1:00 AM daily
