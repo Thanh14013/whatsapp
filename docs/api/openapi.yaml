@@ -1,0 +1,1486 @@
+openapi: 3.0.3
+info:
+  title: WhatsApp Clone – Microservices API
+  description: |
+    ## Overview
+    Production-ready real-time chat platform built on **microservices + Domain-Driven Design**.
+    Designed to serve **100 million DAU** at **230 K RPS peak**.
+
+    ## Authentication
+    Most endpoints require a valid **JWT Bearer token** in the `Authorization` header.
+    ```
+    Authorization: Bearer <jwt_token>
+    ```
+    Obtain a token by registering a user (`POST /api/users`) – the response body
+    contains the token. Future login endpoint will issue tokens on credential verification.
+
+    ## API Gateway routing
+    All HTTP requests should go through the **API Gateway** on port `8080`.
+    The gateway handles JWT validation, rate-limiting and circuit-breaking before
+    proxying to the correct downstream service.
+
+    | Service            | Internal port | Gateway prefix           |
+    |--------------------|--------------|--------------------------|
+    | User Service       | 8081         | `/api/users`, `/api/auth`|
+    | Chat Service       | 8082         | `/api/messages`, `/api/conversations` |
+    | Notification Svc   | 8084         | `/notifications`         |
+    | Message Processor  | 8085         | *(internal only)*        |
+    | Scheduled Jobs     | 8086         | *(internal only)*        |
+
+    ## WebSocket
+    Real-time messaging is handled outside HTTP via:
+    ```
+    ws://localhost:8082/ws/chat?userId={userId}&token={jwtToken}
+    ```
+    See the **WebSocket Events** section at the bottom of this document.
+
+  version: "1.0.0"
+  contact:
+    name: WhatsApp Clone Team
+    email: team@whatsapp-clone.dev
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:8080
+    description: API Gateway (recommended)
+  - url: http://localhost:8081
+    description: User Service (direct)
+  - url: http://localhost:8082
+    description: Chat Service (direct)
+  - url: http://localhost:8084
+    description: Notification Service (direct)
+
+tags:
+  - name: Auth
+    description: User registration and account creation
+  - name: Users
+    description: Profile management, status and search
+  - name: Conversations
+    description: Conversation (chat room) lifecycle
+  - name: Messages
+    description: Sending, retrieving and acknowledging messages
+  - name: Notifications
+    description: Push-notification device token management
+  - name: Health
+    description: Actuator health & Prometheus metrics
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SECURITY SCHEMES
+# ─────────────────────────────────────────────────────────────────────────────
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        JWT signed with HS256. Claims: `sub` (userId), `username`, `email`, `roles`, `iat`, `exp`.
+        Default expiry: **24 hours**.
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # SCHEMAS
+  # ───────────────────────────────────────────────────────────────────────────
+  schemas:
+
+    # Generic wrappers -----------------------------------------------------------
+    BaseResponse:
+      type: object
+      description: Standard envelope returned by every endpoint
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: "Operation completed successfully"
+        data:
+          description: Payload – type depends on endpoint
+        timestamp:
+          type: string
+          format: date-time
+          example: "2026-02-24T08:30:00Z"
+        error:
+          $ref: '#/components/schemas/ErrorDetail'
+
+    ErrorDetail:
+      type: object
+      properties:
+        code:
+          type: string
+          example: "VALIDATION_ERROR"
+        details:
+          type: object
+          additionalProperties:
+            type: string
+
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        message:
+          type: string
+          example: "Validation failed"
+        error:
+          $ref: '#/components/schemas/ErrorDetail'
+        timestamp:
+          type: string
+          format: date-time
+
+    # User -----------------------------------------------------------------------
+    CreateUserRequest:
+      type: object
+      required: [username, email, phoneNumber, password, displayName]
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 30
+          pattern: '^[a-zA-Z0-9._-]+$'
+          example: "john_doe"
+        email:
+          type: string
+          format: email
+          example: "john.doe@example.com"
+        phoneNumber:
+          type: string
+          pattern: '^\+?[1-9]\d{1,14}$'
+          example: "+84912345678"
+          description: E.164 international format
+        password:
+          type: string
+          format: password
+          minLength: 8
+          example: "SecurePass@123"
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 50
+          example: "John Doe"
+        bio:
+          type: string
+          maxLength: 500
+          example: "Software Engineer"
+
+    UpdateUserRequest:
+      type: object
+      properties:
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 50
+          example: "John Doe Updated"
+        bio:
+          type: string
+          maxLength: 500
+          example: "Senior Software Engineer"
+        avatarUrl:
+          type: string
+          format: uri
+          example: "https://cdn.example.com/avatars/john.jpg"
+        statusMessage:
+          type: string
+          maxLength: 255
+          example: "In a meeting"
+
+    UserDto:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "usr_01HN2K3VABCDEF1234567890"
+        username:
+          type: string
+          example: "john_doe"
+        email:
+          type: string
+          format: email
+          example: "john.doe@example.com"
+        phoneNumber:
+          type: string
+          example: "+84912345678"
+        displayName:
+          type: string
+          example: "John Doe"
+        bio:
+          type: string
+          example: "Software Engineer"
+        avatarUrl:
+          type: string
+          format: uri
+          example: "https://cdn.example.com/avatars/john.jpg"
+        statusMessage:
+          type: string
+          example: "Available"
+        status:
+          $ref: '#/components/schemas/UserStatus'
+        active:
+          type: boolean
+          example: true
+        emailVerified:
+          type: boolean
+          example: false
+        phoneVerified:
+          type: boolean
+          example: false
+        createdAt:
+          type: string
+          format: date-time
+          example: "2026-01-15T10:00:00Z"
+        updatedAt:
+          type: string
+          format: date-time
+          example: "2026-02-20T15:30:00Z"
+        lastSeenAt:
+          type: string
+          format: date-time
+          example: "2026-02-24T08:00:00Z"
+
+    UserStatus:
+      type: string
+      enum: [ONLINE, OFFLINE, AWAY, BUSY]
+      example: ONLINE
+      description: |
+        - `ONLINE` – active & connected
+        - `OFFLINE` – disconnected
+        - `AWAY` – idle
+        - `BUSY` – Do Not Disturb
+
+    # Conversation ---------------------------------------------------------------
+    CreateConversationRequest:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [ONE_TO_ONE, GROUP]
+          example: "ONE_TO_ONE"
+        participant1Id:
+          type: string
+          example: "usr_01HN2K3VABCDEF1234567890"
+        participant1Name:
+          type: string
+          example: "John Doe"
+        participant2Id:
+          type: string
+          example: "usr_02XYZ9876543210ABCDEF"
+        participant2Name:
+          type: string
+          example: "Jane Smith"
+        name:
+          type: string
+          example: "Dev Team"
+          description: Required for GROUP type
+        description:
+          type: string
+          example: "Development squad channel"
+        creatorId:
+          type: string
+          example: "usr_01HN2K3VABCDEF1234567890"
+        creatorName:
+          type: string
+          example: "John Doe"
+        additionalParticipants:
+          type: array
+          items:
+            $ref: '#/components/schemas/ParticipantDto'
+
+    ParticipantDto:
+      type: object
+      required: [userId, displayName]
+      properties:
+        userId:
+          type: string
+          example: "usr_03LMNOP111222333444555"
+        displayName:
+          type: string
+          example: "Alice Johnson"
+
+    ConversationDto:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "conv_01HN2K3VABCDEF1234567890"
+        type:
+          type: string
+          enum: [ONE_TO_ONE, GROUP]
+          example: "ONE_TO_ONE"
+        name:
+          type: string
+          example: "John Doe & Jane Smith"
+        description:
+          type: string
+          example: "Private conversation"
+        avatarUrl:
+          type: string
+          format: uri
+        participantIds:
+          type: array
+          items:
+            type: string
+          example: ["usr_01HN2K3VABCDEF1234567890", "usr_02XYZ9876543210ABCDEF"]
+        lastMessageId:
+          type: string
+          example: "msg_05ABCXYZ0987654321"
+        lastMessageTimestamp:
+          type: string
+          format: date-time
+          example: "2026-02-24T08:29:00Z"
+        active:
+          type: boolean
+          example: true
+        createdAt:
+          type: string
+          format: date-time
+          example: "2026-01-15T10:00:00Z"
+        updatedAt:
+          type: string
+          format: date-time
+          example: "2026-02-24T08:29:00Z"
+
+    # Message --------------------------------------------------------------------
+    SendMessageRequest:
+      type: object
+      required: [receiverId, content, contentType]
+      properties:
+        receiverId:
+          type: string
+          example: "usr_02XYZ9876543210ABCDEF"
+        content:
+          type: string
+          maxLength: 10000
+          example: "Hey! How are you?"
+        contentType:
+          $ref: '#/components/schemas/ContentType'
+        replyToMessageId:
+          type: string
+          example: "msg_04REPLY99887766554433"
+          description: Optional – ID of the message being replied to
+
+    ContentType:
+      type: string
+      enum: [TEXT, IMAGE, VIDEO, AUDIO, DOCUMENT]
+      example: TEXT
+
+    MessageStatus:
+      type: string
+      enum: [SENT, DELIVERED, READ, FAILED]
+      example: DELIVERED
+      description: |
+        - `SENT` – saved on server
+        - `DELIVERED` – received on recipient device
+        - `READ` – recipient opened message
+        - `FAILED` – delivery error
+
+    MessageDto:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "msg_05ABCXYZ0987654321"
+        conversationId:
+          type: string
+          example: "conv_01HN2K3VABCDEF1234567890"
+        senderId:
+          type: string
+          example: "usr_01HN2K3VABCDEF1234567890"
+        receiverId:
+          type: string
+          example: "usr_02XYZ9876543210ABCDEF"
+        contentType:
+          type: string
+          example: "TEXT"
+        content:
+          type: string
+          example: "Hey! How are you?"
+        mediaUrl:
+          type: string
+          format: uri
+          example: "https://media.example.com/images/photo.jpg"
+        status:
+          $ref: '#/components/schemas/MessageStatus'
+        sentAt:
+          type: string
+          format: date-time
+          example: "2026-02-24T08:30:00Z"
+        deliveredAt:
+          type: string
+          format: date-time
+          example: "2026-02-24T08:30:01Z"
+        readAt:
+          type: string
+          format: date-time
+          example: "2026-02-24T08:32:00Z"
+        replyToMessageId:
+          type: string
+          example: "msg_04REPLY99887766554433"
+        deleted:
+          type: boolean
+          example: false
+        createdAt:
+          type: string
+          format: date-time
+          example: "2026-02-24T08:30:00Z"
+
+    # Notification ---------------------------------------------------------------
+    RegisterTokenRequest:
+      type: object
+      required: [userId, token, platform]
+      properties:
+        userId:
+          type: string
+          example: "usr_01HN2K3VABCDEF1234567890"
+        token:
+          type: string
+          example: "fcm_token_abc123xyz456def789ghi"
+          description: FCM token (Android/Web) or APNs token (iOS)
+        platform:
+          $ref: '#/components/schemas/DevicePlatform'
+        deviceName:
+          type: string
+          example: "Pixel 8 Pro"
+
+    DevicePlatform:
+      type: string
+      enum: [ANDROID, IOS, WEB]
+      example: ANDROID
+
+    SendNotificationRequest:
+      type: object
+      required: [userId, senderName, message]
+      properties:
+        userId:
+          type: string
+          example: "usr_02XYZ9876543210ABCDEF"
+        senderName:
+          type: string
+          example: "John Doe"
+        message:
+          type: string
+          example: "Hey! How are you?"
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # REUSABLE RESPONSES
+  # ───────────────────────────────────────────────────────────────────────────
+  responses:
+    Unauthorized:
+      description: Missing or invalid JWT token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            message: "Authentication required"
+            error: {code: "UNAUTHORIZED"}
+            timestamp: "2026-02-24T08:30:00Z"
+
+    Forbidden:
+      description: Authenticated but not authorised for this action
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            message: "Access denied"
+            error: {code: "FORBIDDEN"}
+            timestamp: "2026-02-24T08:30:00Z"
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            message: "Resource not found"
+            error: {code: "NOT_FOUND"}
+            timestamp: "2026-02-24T08:30:00Z"
+
+    ValidationError:
+      description: Request body failed validation
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            message: "Validation failed"
+            error:
+              code: "VALIDATION_ERROR"
+              details:
+                username: "Username is required"
+                email: "Email must be valid"
+            timestamp: "2026-02-24T08:30:00Z"
+
+    TooManyRequests:
+      description: Rate limit exceeded (Bucket4j / Nginx)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            message: "Rate limit exceeded. Retry after 60 seconds."
+            error: {code: "RATE_LIMIT_EXCEEDED"}
+            timestamp: "2026-02-24T08:30:00Z"
+
+    ServiceUnavailable:
+      description: Circuit breaker open – downstream service unavailable
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            message: "Service temporarily unavailable"
+            error: {code: "SERVICE_UNAVAILABLE"}
+            timestamp: "2026-02-24T08:30:00Z"
+
+# =============================================================================
+# PATHS
+# =============================================================================
+paths:
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # USER SERVICE  (Gateway: /api/users/**)
+  # ───────────────────────────────────────────────────────────────────────────
+
+  /api/users:
+    post:
+      tags: [Auth]
+      summary: Register a new user
+      description: |
+        Creates a new user account. No authentication required.
+
+        **Rules**
+        - `username`: 3–30 chars, `[a-zA-Z0-9._-]`
+        - `password`: min 8 chars
+        - `phoneNumber`: E.164 format (e.g. `+84912345678`)
+
+        Returns the created user profile. A JWT is **not** included in the
+        current response; authenticate via your own login flow.
+      operationId: createUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+            example:
+              username: "john_doe"
+              email: "john.doe@example.com"
+              phoneNumber: "+84912345678"
+              password: "SecurePass@123"
+              displayName: "John Doe"
+              bio: "Software Engineer"
+      responses:
+        '201':
+          description: User created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserDto'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '409':
+          description: Username / email / phone already taken
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: "Username already exists"
+                error: {code: "CONFLICT"}
+                timestamp: "2026-02-24T08:30:00Z"
+
+  /api/users/me:
+    get:
+      tags: [Users]
+      summary: Get current authenticated user
+      description: Returns the full profile of the user identified by the JWT token.
+      operationId: getCurrentUser
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Current user profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserDto'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/users/search:
+    get:
+      tags: [Users]
+      summary: Search users
+      description: |
+        Full-text search on `username`, `displayName` and `email`.
+        Returns at most `limit` results (default 10, max 50).
+      operationId: searchUsers
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: Search query (min 2 characters)
+          schema:
+            type: string
+            minLength: 2
+          example: "john"
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 10
+            minimum: 1
+            maximum: 50
+          example: 10
+      responses:
+        '200':
+          description: Matching users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/UserDto'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/users/{id}:
+    get:
+      tags: [Users]
+      summary: Get user by ID
+      operationId: getUserById
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "usr_01HN2K3VABCDEF1234567890"
+      responses:
+        '200':
+          description: User profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserDto'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    put:
+      tags: [Users]
+      summary: Update user profile
+      description: |
+        Update profile fields. **Users can only update their own profile.**
+      operationId: updateUser
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "usr_01HN2K3VABCDEF1234567890"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserRequest'
+            example:
+              displayName: "John Doe Updated"
+              bio: "Senior Software Engineer"
+              statusMessage: "In a meeting"
+      responses:
+        '200':
+          description: Updated user profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserDto'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags: [Users]
+      summary: Deactivate account
+      description: Soft-deletes the user account. **Users can only deactivate their own account.**
+      operationId: deleteUser
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "usr_01HN2K3VABCDEF1234567890"
+      responses:
+        '204':
+          description: Account deactivated
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/users/{id}/status:
+    put:
+      tags: [Users]
+      summary: Update presence status
+      description: |
+        Manually change presence status. Status is also updated automatically
+        on WebSocket connect (`ONLINE`) and disconnect (`OFFLINE`).
+      operationId: updateUserStatus
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "usr_01HN2K3VABCDEF1234567890"
+        - name: status
+          in: query
+          required: true
+          schema:
+            $ref: '#/components/schemas/UserStatus'
+          example: AWAY
+      responses:
+        '200':
+          description: Status updated
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # CHAT SERVICE – Conversations (Gateway: /api/conversations/**)
+  # ───────────────────────────────────────────────────────────────────────────
+
+  /api/conversations:
+    post:
+      tags: [Conversations]
+      summary: Create a conversation
+      description: |
+        Creates a **ONE_TO_ONE** or **GROUP** conversation.
+
+        | Type | Required fields |
+        |------|----------------|
+        | `ONE_TO_ONE` | `participant1Id`, `participant1Name`, `participant2Id`, `participant2Name` |
+        | `GROUP` | `name`, `creatorId`, `creatorName` |
+
+        For groups, supply `additionalParticipants` to add members at creation time.
+      operationId: createConversation
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateConversationRequest'
+            examples:
+              oneToOne:
+                summary: One-to-one chat
+                value:
+                  type: "ONE_TO_ONE"
+                  participant1Id: "usr_01HN2K3VABCDEF1234567890"
+                  participant1Name: "John Doe"
+                  participant2Id: "usr_02XYZ9876543210ABCDEF"
+                  participant2Name: "Jane Smith"
+              group:
+                summary: Group chat
+                value:
+                  type: "GROUP"
+                  name: "Dev Team"
+                  description: "Our development squad"
+                  creatorId: "usr_01HN2K3VABCDEF1234567890"
+                  creatorName: "John Doe"
+                  additionalParticipants:
+                    - userId: "usr_02XYZ9876543210ABCDEF"
+                      displayName: "Jane Smith"
+                    - userId: "usr_03LMNOP111222333444555"
+                      displayName: "Alice Johnson"
+      responses:
+        '201':
+          description: Conversation created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationDto'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    get:
+      tags: [Conversations]
+      summary: List user conversations
+      description: Returns all active conversations for a user, ordered by `lastMessageTimestamp` descending.
+      operationId: getUserConversations
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: userId
+          in: query
+          required: true
+          schema:
+            type: string
+          example: "usr_01HN2K3VABCDEF1234567890"
+      responses:
+        '200':
+          description: List of conversations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ConversationDto'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/conversations/{id}:
+    get:
+      tags: [Conversations]
+      summary: Get conversation by ID
+      description: Returns conversation details. The caller must be a participant.
+      operationId: getConversation
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "conv_01HN2K3VABCDEF1234567890"
+        - name: userId
+          in: query
+          required: true
+          description: Caller's user ID (must be a participant)
+          schema:
+            type: string
+          example: "usr_01HN2K3VABCDEF1234567890"
+      responses:
+        '200':
+          description: Conversation details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationDto'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/conversations/{id}/read:
+    put:
+      tags: [Conversations]
+      summary: Mark conversation as read
+      description: Marks all unread messages in the conversation as `READ` for the given user.
+      operationId: markConversationAsRead
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "conv_01HN2K3VABCDEF1234567890"
+        - name: userId
+          in: query
+          required: true
+          schema:
+            type: string
+          example: "usr_01HN2K3VABCDEF1234567890"
+      responses:
+        '204':
+          description: Conversation marked as read
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/conversations/{id}/participants:
+    post:
+      tags: [Conversations]
+      summary: Add participant to group
+      description: Adds a new member to a GROUP conversation. Only existing participants may invite.
+      operationId: addParticipant
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "conv_01HN2K3VABCDEF1234567890"
+        - name: userId
+          in: query
+          required: true
+          description: Inviter (existing participant)
+          schema:
+            type: string
+          example: "usr_01HN2K3VABCDEF1234567890"
+        - name: newParticipantId
+          in: query
+          required: true
+          schema:
+            type: string
+          example: "usr_04RSTUVW666777888999000"
+        - name: newParticipantName
+          in: query
+          required: true
+          schema:
+            type: string
+          example: "Bob Williams"
+      responses:
+        '200':
+          description: Updated conversation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationDto'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/conversations/{id}/participants/{participantId}:
+    delete:
+      tags: [Conversations]
+      summary: Remove participant from group
+      description: Removes a member from a GROUP conversation.
+      operationId: removeParticipant
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "conv_01HN2K3VABCDEF1234567890"
+        - name: participantId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "usr_04RSTUVW666777888999000"
+        - name: userId
+          in: query
+          required: true
+          description: Requester (must be a participant)
+          schema:
+            type: string
+          example: "usr_01HN2K3VABCDEF1234567890"
+      responses:
+        '204':
+          description: Participant removed
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # CHAT SERVICE – Messages (Gateway: /api/messages/**)
+  # ───────────────────────────────────────────────────────────────────────────
+
+  /api/messages:
+    post:
+      tags: [Messages]
+      summary: Send a message
+      description: |
+        Sends a message to another user.
+
+        **Delivery flow:**
+        1. Message persisted to **MongoDB**
+        2. Conversation metadata updated in **PostgreSQL**
+        3. Event published to **RabbitMQ** (`message.events` exchange)
+        4. Recipient **online** → WebSocket delivery
+        5. Recipient **offline** → FCM push notification + Redis inbox cache
+
+        **Media messages**: upload the file to your media service first,
+        then reference the URL in `content` with `contentType: IMAGE | VIDEO | AUDIO | DOCUMENT`.
+      operationId: sendMessage
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendMessageRequest'
+            example:
+              receiverId: "usr_02XYZ9876543210ABCDEF"
+              content: "Hey! How are you?"
+              contentType: "TEXT"
+      responses:
+        '201':
+          description: Message queued and saved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageDto'
+              example:
+                id: "msg_05ABCXYZ0987654321"
+                conversationId: "conv_01HN2K3VABCDEF1234567890"
+                senderId: "usr_01HN2K3VABCDEF1234567890"
+                receiverId: "usr_02XYZ9876543210ABCDEF"
+                contentType: "TEXT"
+                content: "Hey! How are you?"
+                status: "SENT"
+                sentAt: "2026-02-24T08:30:00Z"
+                deleted: false
+                createdAt: "2026-02-24T08:30:00Z"
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/messages/{id}:
+    get:
+      tags: [Messages]
+      summary: Get message by ID
+      operationId: getMessage
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "msg_05ABCXYZ0987654321"
+      responses:
+        '200':
+          description: Message details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageDto'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags: [Messages]
+      summary: Delete (soft-delete) a message
+      description: Clears message content. The record remains for conversation continuity. Only the **sender** may delete.
+      operationId: deleteMessage
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "msg_05ABCXYZ0987654321"
+        - name: userId
+          in: query
+          required: true
+          description: Must be the sender
+          schema:
+            type: string
+          example: "usr_01HN2K3VABCDEF1234567890"
+      responses:
+        '204':
+          description: Message deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/messages/conversation/{conversationId}:
+    get:
+      tags: [Messages]
+      summary: Get conversation messages (paginated)
+      description: Returns message history ordered by timestamp descending. Default page size 50.
+      operationId: getConversationMessages
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: conversationId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "conv_01HN2K3VABCDEF1234567890"
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 0
+            minimum: 0
+          example: 0
+        - name: size
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 50
+            minimum: 1
+            maximum: 100
+          example: 50
+      responses:
+        '200':
+          description: Paginated messages
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MessageDto'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/messages/{id}/delivered:
+    put:
+      tags: [Messages]
+      summary: Acknowledge message delivery
+      description: Sets status to `DELIVERED` and records `deliveredAt`. Called automatically by the client when message arrives.
+      operationId: markAsDelivered
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "msg_05ABCXYZ0987654321"
+        - name: userId
+          in: query
+          required: true
+          description: Must be the recipient
+          schema:
+            type: string
+          example: "usr_02XYZ9876543210ABCDEF"
+      responses:
+        '200':
+          description: Updated message
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageDto'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/messages/{id}/read:
+    put:
+      tags: [Messages]
+      summary: Acknowledge message read
+      description: Sets status to `READ` and records `readAt`. Called when the recipient opens the message.
+      operationId: markAsRead
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "msg_05ABCXYZ0987654321"
+        - name: userId
+          in: query
+          required: true
+          description: Must be the recipient
+          schema:
+            type: string
+          example: "usr_02XYZ9876543210ABCDEF"
+      responses:
+        '200':
+          description: Updated message
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageDto'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # NOTIFICATION SERVICE (Port 8084 – not routed through Gateway)
+  # ───────────────────────────────────────────────────────────────────────────
+
+  /notifications/register:
+    post:
+      tags: [Notifications]
+      summary: Register device token
+      description: |
+        Store an FCM (Android/Web) or APNs (iOS) push-notification token for a user.
+        Each user can register **multiple tokens** (multi-device support).
+        Tokens are persisted in Redis with an automatic expiry.
+      operationId: registerDeviceToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterTokenRequest'
+            example:
+              userId: "usr_01HN2K3VABCDEF1234567890"
+              token: "fcm_token_abc123xyz456def789"
+              platform: "ANDROID"
+              deviceName: "Pixel 8 Pro"
+      responses:
+        '200':
+          description: Token registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseResponse'
+              example:
+                success: true
+                message: "Device token registered successfully"
+                timestamp: "2026-02-24T08:30:00Z"
+        '400':
+          $ref: '#/components/responses/ValidationError'
+
+  /notifications/token/{token}:
+    delete:
+      tags: [Notifications]
+      summary: Remove a device token
+      description: Unregisters a single device token. Call on per-device logout.
+      operationId: removeDeviceToken
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "fcm_token_abc123xyz456def789"
+      responses:
+        '200':
+          description: Token removed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /notifications/user/{userId}/tokens:
+    delete:
+      tags: [Notifications]
+      summary: Remove all tokens for a user
+      description: Unregisters every token for a user. Call on full logout or account deactivation.
+      operationId: removeAllUserTokens
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "usr_01HN2K3VABCDEF1234567890"
+      responses:
+        '200':
+          description: All tokens removed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseResponse'
+
+  /notifications/tokens/{userId}:
+    get:
+      tags: [Notifications]
+      summary: Get device tokens for a user
+      description: Returns all registered device tokens (admin / debugging).
+      operationId: getUserDeviceTokens
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "usr_01HN2K3VABCDEF1234567890"
+      responses:
+        '200':
+          description: Set of tokens
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseResponse'
+              example:
+                success: true
+                data: ["fcm_token_abc123", "fcm_token_def456"]
+                timestamp: "2026-02-24T08:30:00Z"
+
+  /notifications/send:
+    post:
+      tags: [Notifications]
+      summary: Send push notification (test / manual)
+      description: |
+        Manually trigger a push notification.
+        In production this is called internally by the Message Processor
+        whenever the recipient is offline.
+      operationId: sendNotification
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendNotificationRequest'
+            example:
+              userId: "usr_02XYZ9876543210ABCDEF"
+              senderName: "John Doe"
+              message: "Hey! How are you?"
+      responses:
+        '200':
+          description: Notification dispatched
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # HEALTH & OBSERVABILITY
+  # ───────────────────────────────────────────────────────────────────────────
+
+  /actuator/health:
+    get:
+      tags: [Health]
+      summary: Service health check
+      description: |
+        Spring Boot Actuator health endpoint. Available on **every service**:
+
+        | Service            | URL |
+        |--------------------|-----|
+        | Gateway            | `http://localhost:8080/actuator/health` |
+        | User Service       | `http://localhost:8081/actuator/health` |
+        | Chat Service       | `http://localhost:8082/actuator/health` |
+        | Notification       | `http://localhost:8084/api/v1/actuator/health` |
+        | Message Processor  | `http://localhost:8085/actuator/health` |
+        | Scheduled Jobs     | `http://localhost:8086/actuator/health` |
+
+        Checks: database connectivity, Redis ping, RabbitMQ diagnostics, disk space.
+      operationId: healthCheck
+      responses:
+        '200':
+          description: Healthy
+          content:
+            application/json:
+              example:
+                status: "UP"
+                components:
+                  db: {status: "UP"}
+                  redis: {status: "UP"}
+                  rabbit: {status: "UP"}
+                  diskSpace: {status: "UP"}
+        '503':
+          description: Unhealthy – one or more components down
+
+  /actuator/prometheus:
+    get:
+      tags: [Health]
+      summary: Prometheus metrics scrape endpoint
+      description: |
+        Exposes Micrometer metrics in Prometheus text format.
+        Scraped every **15 s** by the Prometheus container.
+
+        **Key metrics:**
+
+        | Metric | Description |
+        |--------|-------------|
+        | `http_server_requests_seconds` | HTTP request latency histogram |
+        | `jvm_memory_used_bytes` | JVM heap & non-heap usage |
+        | `hikaricp_connections_active` | Active JDBC connections |
+        | `spring_rabbitmq_listener_seconds` | RabbitMQ consumer latency |
+        | `cache_gets_total` | Redis cache hit / miss counts |
+        | `websocket_connections_active` | Live WebSocket connections |
+      operationId: prometheusMetrics
+      responses:
+        '200':
+          description: Prometheus text format
+          content:
+            text/plain:
+              example: |
+                # HELP http_server_requests_seconds_count Total number of requests
+                # TYPE http_server_requests_seconds_count counter
+                http_server_requests_seconds_count{exception="None",method="GET",outcome="SUCCESS",status="200",uri="/api/users/me"} 4320.0
+
+# =============================================================================
+# WebSocket Contract (informational – described here for completeness)
+# =============================================================================
+# Endpoint:  ws://localhost:8082/ws/chat?userId={userId}&token={jwtToken}
+#
+# ── Client → Server ──────────────────────────────────────────────────────────
+# Send message:
+#   { "action": "send_message", "receiverId": "...", "content": "...", "contentType": "TEXT" }
+# Acknowledge delivery:
+#   { "action": "message_delivered", "messageId": "...", "receiverId": "..." }
+# Acknowledge read:
+#   { "action": "message_read", "messageId": "...", "receiverId": "..." }
+# Keep-alive:
+#   { "action": "ping" }
+#
+# ── Server → Client ──────────────────────────────────────────────────────────
+# New inbound message:
+#   { "type": "incoming_message", "message": { /* MessageDto */ } }
+# Delivery receipt from recipient:
+#   { "type": "message_delivered", "messageId": "...", "deliveredAt": "..." }
+# Read receipt from recipient:
+#   { "type": "message_read", "messageId": "...", "readAt": "..." }
+# Presence update:
+#   { "type": "user_status", "userId": "...", "status": "ONLINE|OFFLINE" }
+# Keep-alive response:
+#   { "type": "pong" }
+# =============================================================================
+
+security:
+  - BearerAuth: []
+

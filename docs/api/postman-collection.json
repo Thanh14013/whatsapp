@@ -1,0 +1,844 @@
+{
+  "info": {
+    "_postman_id": "wa-clone-v1-2026",
+    "name": "WhatsApp Clone – Microservices API",
+    "description": "Complete Postman collection for the WhatsApp Clone microservices platform.\n\n## Quick start\n1. Import this collection\n2. Set environment variable `baseUrl` = `http://localhost:8080`\n3. Register a user → copy the returned `id` into `userId`\n4. Set `authToken` manually (JWT from your login flow)\n5. Run requests in folder order\n\n## Variables used\n| Variable | Description |\n|----------|-------------|\n| `baseUrl` | API Gateway base URL (default: http://localhost:8080) |\n| `notifUrl` | Notification Service URL (default: http://localhost:8084) |\n| `authToken` | JWT Bearer token |\n| `userId` | Current user ID |\n| `otherUserId` | Second test user ID |\n| `conversationId` | Active conversation ID |\n| `messageId` | Last sent message ID |",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl",       "value": "http://localhost:8080", "type": "string" },
+    { "key": "notifUrl",      "value": "http://localhost:8084", "type": "string" },
+    { "key": "authToken",     "value": "",                      "type": "string" },
+    { "key": "userId",        "value": "",                      "type": "string" },
+    { "key": "otherUserId",   "value": "",                      "type": "string" },
+    { "key": "conversationId","value": "",                      "type": "string" },
+    { "key": "messageId",     "value": "",                      "type": "string" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{authToken}}", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "🔐 Auth",
+      "description": "User registration. No JWT required.",
+      "item": [
+        {
+          "name": "Register User (User A)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.id) {",
+                  "  pm.collectionVariables.set('userId', json.id);",
+                  "  pm.test('User created', () => pm.response.to.have.status(201));",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"john_doe\",\n  \"email\": \"john.doe@example.com\",\n  \"phoneNumber\": \"+84912345678\",\n  \"password\": \"SecurePass@123\",\n  \"displayName\": \"John Doe\",\n  \"bio\": \"Software Engineer\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/users", "host": ["{{baseUrl}}"], "path": ["api","users"] }
+          },
+          "response": []
+        },
+        {
+          "name": "Register User (User B)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.id) {",
+                  "  pm.collectionVariables.set('otherUserId', json.id);",
+                  "  pm.test('User B created', () => pm.response.to.have.status(201));",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"jane_smith\",\n  \"email\": \"jane.smith@example.com\",\n  \"phoneNumber\": \"+84987654321\",\n  \"password\": \"SecurePass@123\",\n  \"displayName\": \"Jane Smith\",\n  \"bio\": \"Product Designer\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/users", "host": ["{{baseUrl}}"], "path": ["api","users"] }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "👤 Users",
+      "description": "User profile, presence and search. Requires JWT.",
+      "item": [
+        {
+          "name": "Get Current User (me)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Has id field', () => pm.expect(pm.response.json()).to.have.property('id'));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/users/me", "host": ["{{baseUrl}}"], "path": ["api","users","me"] }
+          },
+          "response": []
+        },
+        {
+          "name": "Get User by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/users/{{userId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","users","{{userId}}"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update User Profile",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"displayName\": \"John Doe Updated\",\n  \"bio\": \"Senior Software Engineer @ ACME\",\n  \"statusMessage\": \"In a meeting\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/users/{{userId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","users","{{userId}}"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update User Status – ONLINE",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/users/{{userId}}/status?status=ONLINE",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","users","{{userId}}","status"],
+              "query": [{ "key": "status", "value": "ONLINE" }]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update User Status – AWAY",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/users/{{userId}}/status?status=AWAY",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","users","{{userId}}","status"],
+              "query": [{ "key": "status", "value": "AWAY" }]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Search Users",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/users/search?q=john&limit=10",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","users","search"],
+              "query": [
+                { "key": "q",     "value": "john" },
+                { "key": "limit", "value": "10" }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Deactivate User Account",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/users/{{userId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","users","{{userId}}"]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "💬 Conversations",
+      "description": "Create and manage one-to-one and group conversations.",
+      "item": [
+        {
+          "name": "Create One-to-One Conversation",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.id) {",
+                  "  pm.collectionVariables.set('conversationId', json.id);",
+                  "  pm.test('Conversation created', () => pm.response.to.have.status(201));",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"ONE_TO_ONE\",\n  \"participant1Id\": \"{{userId}}\",\n  \"participant1Name\": \"John Doe\",\n  \"participant2Id\": \"{{otherUserId}}\",\n  \"participant2Name\": \"Jane Smith\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/conversations", "host": ["{{baseUrl}}"], "path": ["api","conversations"] }
+          },
+          "response": []
+        },
+        {
+          "name": "Create Group Conversation",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"GROUP\",\n  \"name\": \"Dev Team\",\n  \"description\": \"Our development squad channel\",\n  \"creatorId\": \"{{userId}}\",\n  \"creatorName\": \"John Doe\",\n  \"additionalParticipants\": [\n    { \"userId\": \"{{otherUserId}}\", \"displayName\": \"Jane Smith\" }\n  ]\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/conversations", "host": ["{{baseUrl}}"], "path": ["api","conversations"] }
+          },
+          "response": []
+        },
+        {
+          "name": "List My Conversations",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/conversations?userId={{userId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","conversations"],
+              "query": [{ "key": "userId", "value": "{{userId}}" }]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Conversation by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/conversations/{{conversationId}}?userId={{userId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","conversations","{{conversationId}}"],
+              "query": [{ "key": "userId", "value": "{{userId}}" }]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Mark Conversation as Read",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/conversations/{{conversationId}}/read?userId={{userId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","conversations","{{conversationId}}","read"],
+              "query": [{ "key": "userId", "value": "{{userId}}" }]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Add Participant to Group",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/conversations/{{conversationId}}/participants?userId={{userId}}&newParticipantId=NEW_USER_ID&newParticipantName=Bob+Williams",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","conversations","{{conversationId}}","participants"],
+              "query": [
+                { "key": "userId",            "value": "{{userId}}" },
+                { "key": "newParticipantId",  "value": "NEW_USER_ID" },
+                { "key": "newParticipantName","value": "Bob Williams" }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Remove Participant from Group",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/conversations/{{conversationId}}/participants/{{otherUserId}}?userId={{userId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","conversations","{{conversationId}}","participants","{{otherUserId}}"],
+              "query": [{ "key": "userId", "value": "{{userId}}" }]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "✉️ Messages",
+      "description": "Send, retrieve and acknowledge messages.",
+      "item": [
+        {
+          "name": "Send Text Message",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.id) {",
+                  "  pm.collectionVariables.set('messageId', json.id);",
+                  "  pm.test('Message sent', () => pm.response.to.have.status(201));",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"receiverId\": \"{{otherUserId}}\",\n  \"content\": \"Hey! How are you?\",\n  \"contentType\": \"TEXT\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/messages", "host": ["{{baseUrl}}"], "path": ["api","messages"] }
+          },
+          "response": []
+        },
+        {
+          "name": "Send Image Message",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"receiverId\": \"{{otherUserId}}\",\n  \"content\": \"https://media.example.com/images/photo.jpg\",\n  \"contentType\": \"IMAGE\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/messages", "host": ["{{baseUrl}}"], "path": ["api","messages"] }
+          },
+          "response": []
+        },
+        {
+          "name": "Reply to Message",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"receiverId\": \"{{otherUserId}}\",\n  \"content\": \"I'm doing great, thanks!\",\n  \"contentType\": \"TEXT\",\n  \"replyToMessageId\": \"{{messageId}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/messages", "host": ["{{baseUrl}}"], "path": ["api","messages"] }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Message by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/messages/{{messageId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","messages","{{messageId}}"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Conversation Messages (Page 0)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/messages/conversation/{{conversationId}}?page=0&size=50",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","messages","conversation","{{conversationId}}"],
+              "query": [
+                { "key": "page", "value": "0" },
+                { "key": "size", "value": "50" }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Mark Message as Delivered",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/messages/{{messageId}}/delivered?userId={{otherUserId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","messages","{{messageId}}","delivered"],
+              "query": [{ "key": "userId", "value": "{{otherUserId}}" }]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Mark Message as Read",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/messages/{{messageId}}/read?userId={{otherUserId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","messages","{{messageId}}","read"],
+              "query": [{ "key": "userId", "value": "{{otherUserId}}" }]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Message",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/messages/{{messageId}}?userId={{userId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","messages","{{messageId}}"],
+              "query": [{ "key": "userId", "value": "{{userId}}" }]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "🔔 Notifications",
+      "description": "Push-notification device token management (Notification Service – port 8084).",
+      "item": [
+        {
+          "name": "Register Android Device Token",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{userId}}\",\n  \"token\": \"fcm_token_abc123xyz456def789\",\n  \"platform\": \"ANDROID\",\n  \"deviceName\": \"Pixel 8 Pro\"\n}"
+            },
+            "url": { "raw": "{{notifUrl}}/notifications/register", "host": ["{{notifUrl}}"], "path": ["notifications","register"] }
+          },
+          "response": []
+        },
+        {
+          "name": "Register iOS Device Token",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{userId}}\",\n  \"token\": \"apns_token_iphone15pro_xyz\",\n  \"platform\": \"IOS\",\n  \"deviceName\": \"iPhone 15 Pro\"\n}"
+            },
+            "url": { "raw": "{{notifUrl}}/notifications/register", "host": ["{{notifUrl}}"], "path": ["notifications","register"] }
+          },
+          "response": []
+        },
+        {
+          "name": "Get User Device Tokens",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{notifUrl}}/notifications/tokens/{{userId}}",
+              "host": ["{{notifUrl}}"],
+              "path": ["notifications","tokens","{{userId}}"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Send Test Notification",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{otherUserId}}\",\n  \"senderName\": \"John Doe\",\n  \"message\": \"Hey! How are you?\"\n}"
+            },
+            "url": { "raw": "{{notifUrl}}/notifications/send", "host": ["{{notifUrl}}"], "path": ["notifications","send"] }
+          },
+          "response": []
+        },
+        {
+          "name": "Remove Specific Device Token",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{notifUrl}}/notifications/token/fcm_token_abc123xyz456def789",
+              "host": ["{{notifUrl}}"],
+              "path": ["notifications","token","fcm_token_abc123xyz456def789"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Remove All User Tokens",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{notifUrl}}/notifications/user/{{userId}}/tokens",
+              "host": ["{{notifUrl}}"],
+              "path": ["notifications","user","{{userId}}","tokens"]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "🏥 Health & Monitoring",
+      "description": "Actuator health checks and Prometheus metrics for all services.",
+      "item": [
+        {
+          "name": "Gateway Health",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/actuator/health", "host": ["{{baseUrl}}"], "path": ["actuator","health"] }
+          },
+          "response": []
+        },
+        {
+          "name": "User Service Health",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "http://localhost:8081/actuator/health", "raw": "http://localhost:8081/actuator/health" }
+          },
+          "response": []
+        },
+        {
+          "name": "Chat Service Health",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "http://localhost:8082/actuator/health" }
+          },
+          "response": []
+        },
+        {
+          "name": "Notification Service Health",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "http://localhost:8084/api/v1/actuator/health" }
+          },
+          "response": []
+        },
+        {
+          "name": "Message Processor Health",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "http://localhost:8085/actuator/health" }
+          },
+          "response": []
+        },
+        {
+          "name": "Scheduled Jobs Health",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "http://localhost:8086/actuator/health" }
+          },
+          "response": []
+        },
+        {
+          "name": "Gateway Prometheus Metrics",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/actuator/prometheus", "host": ["{{baseUrl}}"], "path": ["actuator","prometheus"] }
+          },
+          "response": []
+        },
+        {
+          "name": "User Service Prometheus Metrics",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "http://localhost:8081/actuator/prometheus" }
+          },
+          "response": []
+        },
+        {
+          "name": "Chat Service Prometheus Metrics",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "http://localhost:8082/actuator/prometheus" }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "🔄 End-to-End Scenario",
+      "description": "Run this folder in order to verify the full happy-path: register → create conversation → send message → acknowledge delivery → read.",
+      "item": [
+        {
+          "name": "1. Register Alice",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "pm.collectionVariables.set('userId', json.id);",
+                  "pm.test('Alice registered', () => pm.response.to.have.status(201));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"alice_e2e\",\n  \"email\": \"alice.e2e@example.com\",\n  \"phoneNumber\": \"+84911111111\",\n  \"password\": \"TestPass@123\",\n  \"displayName\": \"Alice E2E\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/users", "host": ["{{baseUrl}}"], "path": ["api","users"] }
+          },
+          "response": []
+        },
+        {
+          "name": "2. Register Bob",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "pm.collectionVariables.set('otherUserId', json.id);",
+                  "pm.test('Bob registered', () => pm.response.to.have.status(201));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"bob_e2e\",\n  \"email\": \"bob.e2e@example.com\",\n  \"phoneNumber\": \"+84922222222\",\n  \"password\": \"TestPass@123\",\n  \"displayName\": \"Bob E2E\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/users", "host": ["{{baseUrl}}"], "path": ["api","users"] }
+          },
+          "response": []
+        },
+        {
+          "name": "3. Create Conversation",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "pm.collectionVariables.set('conversationId', json.id);",
+                  "pm.test('Conversation created', () => pm.response.to.have.status(201));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"ONE_TO_ONE\",\n  \"participant1Id\": \"{{userId}}\",\n  \"participant1Name\": \"Alice E2E\",\n  \"participant2Id\": \"{{otherUserId}}\",\n  \"participant2Name\": \"Bob E2E\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/conversations", "host": ["{{baseUrl}}"], "path": ["api","conversations"] }
+          },
+          "response": []
+        },
+        {
+          "name": "4. Send Message",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "pm.collectionVariables.set('messageId', json.id);",
+                  "pm.test('Message sent, status SENT', () => {",
+                  "  pm.response.to.have.status(201);",
+                  "  pm.expect(json.status).to.equal('SENT');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"receiverId\": \"{{otherUserId}}\",\n  \"content\": \"Hello Bob! This is an E2E test message.\",\n  \"contentType\": \"TEXT\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/messages", "host": ["{{baseUrl}}"], "path": ["api","messages"] }
+          },
+          "response": []
+        },
+        {
+          "name": "5. Acknowledge Delivery",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status DELIVERED', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().status).to.equal('DELIVERED');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/messages/{{messageId}}/delivered?userId={{otherUserId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","messages","{{messageId}}","delivered"],
+              "query": [{ "key": "userId", "value": "{{otherUserId}}" }]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "6. Acknowledge Read",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status READ', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().status).to.equal('READ');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/messages/{{messageId}}/read?userId={{otherUserId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","messages","{{messageId}}","read"],
+              "query": [{ "key": "userId", "value": "{{otherUserId}}" }]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "7. Get Conversation History",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Has messages', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json()).to.be.an('array').that.is.not.empty;",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/messages/conversation/{{conversationId}}?page=0&size=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","messages","conversation","{{conversationId}}"],
+              "query": [
+                { "key": "page", "value": "0" },
+                { "key": "size", "value": "20" }
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}
+
