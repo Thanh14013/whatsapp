@@ -33,6 +33,7 @@ import java.util.stream.Collectors;
 @Slf4j
 @Service
 @RequiredArgsConstructor
+@SuppressWarnings("SpringJavaInjectionPointsAutowiringInspection")
 public class ChatApplicationService {
 
     private final MessageRepository messageRepository;
@@ -62,7 +63,7 @@ public class ChatApplicationService {
         }
 
         // Create message content
-        MessageContent content = MessageContent.createText(request.getContent());
+        MessageContent content = MessageContent.text(request.getContent());
 
         // Create message using domain service
         Message message = messageDomainService.createMessage(
@@ -198,7 +199,7 @@ public class ChatApplicationService {
             throw new IllegalArgumentException("Only sender can delete message");
         }
 
-        message.delete();
+        message.delete(userId);
         messageRepository.save(message);
 
         log.info("Message deleted: {}", messageId);

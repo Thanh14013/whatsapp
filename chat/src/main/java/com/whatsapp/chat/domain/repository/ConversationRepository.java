@@ -9,50 +9,41 @@ import java.util.Optional;
 /**
  * Conversation Repository Interface (Domain Layer)
  *
- * Defines repository operations for Conversation aggregate.
- * Implementation is in infrastructure layer (PostgreSQL).
+ * Defines repository operations for the Conversation aggregate.
+ * Implementation lives in the infrastructure layer (PostgreSQL via JPA).
  *
  * @author WhatsApp Clone Team
  */
 public interface ConversationRepository {
 
-    /**
-     * Save or update conversation
-     */
+    /** Save or update a conversation. */
     Conversation save(Conversation conversation);
 
-    /**
-     * Find conversation by ID
-     */
+    /** Find a conversation by its unique ID. */
     Optional<Conversation> findById(ConversationId conversationId);
 
     /**
-     * Find conversation by participants
+     * Find a ONE_TO_ONE conversation between two specific users.
+     * Used to enforce "one conversation per pair" invariant.
      */
+    Optional<Conversation> findOneToOneConversation(String user1Id, String user2Id);
+
+    /** @deprecated Use {@link #findOneToOneConversation} for ONE_TO_ONE lookups. */
+    @Deprecated
     Optional<Conversation> findByParticipants(String user1Id, String user2Id);
 
-    /**
-     * Find all conversations for a user
-     */
-    List<Conversation> findByUserId(String userId);
+    /** Find all conversations a user participates in, ordered by last activity. */
+    List<Conversation> findByParticipantId(String userId);
 
-    /**
-     * Find all conversations for a user with pagination
-     */
+    /** Paginated variant of {@link #findByParticipantId}. */
     List<Conversation> findByUserId(String userId, int offset, int limit);
 
-    /**
-     * Check if conversation exists between two users
-     */
+    /** Check whether a ONE_TO_ONE conversation already exists between two users. */
     boolean existsByParticipants(String user1Id, String user2Id);
 
-    /**
-     * Count conversations for a user
-     */
+    /** Count conversations for a user. */
     long countByUserId(String userId);
 
-    /**
-     * Delete conversation
-     */
+    /** Delete a conversation by ID. */
     void delete(ConversationId conversationId);
 }

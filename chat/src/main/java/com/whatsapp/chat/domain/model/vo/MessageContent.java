@@ -89,6 +89,15 @@ public class MessageContent {
     }
 
     /**
+     * Get the media URL for non-text content.
+     * Returns the {@code text} field (which stores the URL for media types),
+     * or {@code null} for plain text messages.
+     */
+    public String getMediaUrl() {
+        return isText() ? null : text;
+    }
+
+    /**
      * Validate text content
      */
     private static void validateText(String text) {

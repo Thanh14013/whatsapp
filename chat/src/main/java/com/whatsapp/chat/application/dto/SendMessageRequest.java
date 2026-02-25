@@ -21,8 +21,14 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class SendMessageRequest {
 
+    /** ID of the user sending the message (resolved from auth principal when available) */
+    private String senderId;
+
     @NotBlank(message = "Receiver ID is required")
     private String receiverId;
+
+    @NotBlank(message = "Conversation ID is required")
+    private String conversationId;
 
     @NotBlank(message = "Message content is required")
     @Size(max = 10000, message = "Message content cannot exceed 10000 characters")
@@ -30,6 +36,9 @@ public class SendMessageRequest {
 
     @NotNull(message = "Content type is required")
     private ContentType contentType;
+
+    /** Optional: ID of the message being replied to */
+    private String replyToMessageId;
 
     /**
      * Content Type Enum

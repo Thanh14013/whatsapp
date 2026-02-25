@@ -38,19 +38,33 @@ public class Message {
     private MessageContent content;
     private MessageStatus status;
     private boolean deleted;
+    private String replyToMessageId;
+    private Instant sentAt;
     private Instant createdAt;
     private Instant deliveredAt;
     private Instant readAt;
     private Instant deletedAt;
 
     /**
-     * Factory method to create a new Message
+     * Factory method to create a new Message (without reply)
      */
     public static Message create(
             ConversationId conversationId,
             String senderId,
             String receiverId,
             MessageContent content) {
+        return create(conversationId, senderId, receiverId, content, null);
+    }
+
+    /**
+     * Factory method to create a new Message (with optional reply reference)
+     */
+    public static Message create(
+            ConversationId conversationId,
+            String senderId,
+            String receiverId,
+            MessageContent content,
+            String replyToMessageId) {
 
         validateParticipants(senderId, receiverId);
         Objects.requireNonNull(conversationId, "Conversation ID cannot be null");
@@ -66,11 +80,35 @@ public class Message {
                 content,
                 MessageStatus.SENT,
                 false,
+                replyToMessageId,
+                now,
                 now,
                 null,
                 null,
                 null
         );
+    }
+
+    /**
+     * Reconstitute a Message from persistent storage.
+     * For use by repository implementations only.
+     */
+    public static Message reconstitute(
+            MessageId id,
+            ConversationId conversationId,
+            String senderId,
+            String receiverId,
+            MessageContent content,
+            MessageStatus status,
+            boolean deleted,
+            String replyToMessageId,
+            Instant sentAt,
+            Instant createdAt,
+            Instant deliveredAt,
+            Instant readAt,
+            Instant deletedAt) {
+        return new Message(id, conversationId, senderId, receiverId, content,
+                status, deleted, replyToMessageId, sentAt, createdAt, deliveredAt, readAt, deletedAt);
     }
 
     /**
