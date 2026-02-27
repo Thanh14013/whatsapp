@@ -23,6 +23,12 @@
 14. [Scalability](#14-scalability)
 15. [Testing](#15-testing)
 16. [Design Patterns](#16-design-patterns)
+17. [Workflow chi tiết — Gửi & Nhận tin nhắn](#17-workflow-chi-tiết--gửi--nhận-tin-nhắn)
+18. [Workflow Online / Offline](#18-workflow-online--offline)
+19. [Workflow Push Notification](#19-workflow-push-notification)
+20. [Xử lý lỗi & Retry](#20-xử-lý-lỗi--retry)
+21. [Trường hợp đặc biệt (Edge Cases)](#21-trường-hợp-đặc-biệt-edge-cases)
+22. [Bất đồng bộ — Async Processing](#22-bất-đồng-bộ--async-processing)
 
 ---
 
@@ -750,6 +756,492 @@
 > - **gRPC** thay REST cho inter-service communication: performance tốt hơn, strongly-typed contracts.
 > - **Saga pattern**: xử lý distributed transactions phức tạp hơn (ví dụ: create conversation cần update cả PostgreSQL và MongoDB atomically).
 > - **API versioning**: hiện tại không có versioning, sẽ thêm `/api/v1/` prefix cho backward compatibility.
+
+---
+
+## 17. Workflow chi tiết — Gửi & Nhận tin nhắn
+
+---
+
+**Q: Mô tả toàn bộ flow từ lúc user A nhấn "Gửi" đến lúc user B nhận được tin nhắn (cả 2 đều online)?**
+
+> ```
+> [Client A]                [API Gateway]           [Chat Service]         [RabbitMQ]           [Client B]
+>     │                          │                        │                     │                    │
+>     │── POST /api/messages ───►│                        │                     │                    │
+>     │                          │── validate JWT ──────► │                     │                    │
+>     │                          │── forward request ────►│                     │                    │
+>     │                          │                        │─ validate payload   │                    │
+>     │                          │                        │─ check conversation │                    │
+>     │                          │                        │─ create Message(DDD)│                    │
+>     │                          │                        │─ persist MongoDB ──►│                    │
+>     │                          │                        │─ update PostgreSQL  │                    │
+>     │                          │                        │─ publish ──────────►│ message.sent       │
+>     │◄── 201 Created ──────────│◄───────────────────────│                     │                    │
+>     │                          │                        │                     │─ consume ─────────►│
+>     │                          │                        │◄────────────── WebSocket push ───────────│
+>     │                          │◄────────── WS delivered receipt ────────────────────────────────│
+>     │◄── WS: DELIVERED ────────│                        │                     │                    │
+> ```
+>
+> **Chi tiết từng bước:**
+> 1. Client A gửi HTTP POST hoặc STOMP `chat.message` frame
+> 2. Gateway validate JWT → inject `X-User-Id` header
+> 3. Chat Service tạo domain object `Message.create(...)` với status SENT, persist vào MongoDB, cập nhật `lastMessageId` + `unreadCount` của conversation trong PostgreSQL
+> 4. Chat Service publish `MESSAGE_SENT` event lên RabbitMQ exchange `message.events`
+> 5. Trả về 201 cho Client A ngay — **không đợi B nhận**
+> 6. Message Processor consume event, check B online → đúng → Chat Service WebSocket push đến B qua `sessionManager.sendToUser(B, "/queue/messages", response)`
+> 7. B nhận tin, client B gửi STOMP `chat.delivered` → Chat Service update status DELIVERED trong MongoDB, publish `MESSAGE_DELIVERED` event
+> 8. Chat Service push `DELIVERED` receipt về Client A qua WebSocket
+
+---
+
+**Q: Flow gửi tin nhắn qua REST API khác gì qua WebSocket?**
+
+> **REST API** (`POST /api/messages`):
+> - Phù hợp khi client không giữ WebSocket connection ổn định (mobile app background)
+> - Request-response: client biết ngay tin nhắn đã được server nhận chưa
+> - Có thể retry HTTP request nếu fail
+> - Server gửi tin nhắn đến B qua WebSocket sau khi persist
+>
+> **WebSocket/STOMP** (`/app/chat.message`):
+> - Phù hợp khi client đang active, giữ connection liên tục
+> - Latency thấp hơn (không overhead HTTP handshake)
+> - Server push acknowledgement trực tiếp trên cùng connection
+>
+> Cả 2 đều đi qua `ChatApplicationService.sendMessage()` — logic giống nhau, chỉ khác interface layer tiếp nhận.
+
+---
+
+**Q: Flow nhận lịch sử tin nhắn (message history) hoạt động thế nào?**
+
+> Client gọi `GET /api/messages?conversationId={id}&before={cursor}&limit=20`:
+> 1. Chat Service query MongoDB: `{ conversationId: id, createdAt: { $lt: cursor } }` với sort `{ createdAt: -1 }`, limit 20
+> 2. Index `{ conversationId: 1, createdAt: -1 }` đảm bảo query hiệu quả
+> 3. Trả về `PageResponse<MessageDto>` gồm messages + `nextCursor` (createdAt của message cuối cùng trong page)
+> 4. Client dùng `nextCursor` để load trang tiếp — **cursor-based pagination** thay vì offset, vì offset không ổn định khi có message mới insert
+
+---
+
+**Q: Khi user B mark "đã đọc", flow cập nhật trạng thái như thế nào?**
+
+> 1. Client B gửi STOMP frame `/app/chat.read` với `{ messageId, receiverId }`
+> 2. `ChatWebSocketController.handleRead()` → `ChatApplicationService.markAsRead(messageId)`
+> 3. Application Service gọi `messageRepository.findById(messageId)` → load `Message` domain object
+> 4. Gọi `message.markAsRead()` — domain method thay đổi status DELIVERED → READ, set `readAt = now()`
+> 5. Persist lại vào MongoDB
+> 6. Publish `MESSAGE_READ` event lên RabbitMQ → Chat Service consume → push `READ` receipt về cho sender A qua WebSocket `/user/{A}/queue/receipts`
+> 7. Đồng thời reset `unreadCount[B] = 0` trong conversation record ở PostgreSQL
+
+---
+
+**Q: Conversation được tạo như thế nào khi lần đầu 2 user nhắn nhau?**
+
+> Flow **create or get** conversation:
+> 1. Client A gửi `POST /api/conversations` với `{ participantId: B }`
+> 2. Chat Service tạo `pairKey = sort([A, B]).join(":")` — key ổn định không phụ thuộc thứ tự
+> 3. Query PostgreSQL: `SELECT * FROM conversations WHERE pair_key = pairKey AND type = 'ONE_TO_ONE'`
+> 4. Nếu **tồn tại** → return existing conversation ID
+> 5. Nếu **chưa có** → gọi `Conversation.createOneToOne(A, B)` → persist → return new ID
+> 6. Client A dùng `conversationId` này để gửi tin nhắn
+>
+> Pattern này đảm bảo không bao giờ có 2 conversation giữa cùng 1 cặp user.
+
+---
+
+## 18. Workflow Online / Offline
+
+---
+
+**Q: Khi user kết nối WebSocket, system làm gì step by step?**
+
+> ```
+> Client                  Chat Service                Redis
+>    │                         │                         │
+>    │── WS connect ──────────►│                         │
+>    │   (JWT in query string) │                         │
+>    │                         │─ validate JWT           │
+>    │                         │─ extract userId         │
+>    │                         │─ addSession(userId, sessionId) ──► WebSocketSessionManager
+>    │                         │─ SET user:status:{userId} "ONLINE" TTL 300s ─────────────►│
+>    │                         │─ check inbox:{userId} ──────────────────────────────────►│
+>    │                         │◄─ messageIds ───────────────────────────────────────────│
+>    │                         │─ fetch messages từ MongoDB                               │
+>    │◄─ deliver pending msgs ─│                         │
+>    │─ ACK delivered ────────►│                         │
+>    │                         │─ SREM inbox:{userId} ───────────────────────────────────►│
+>    │                         │─ update message status DELIVERED in MongoDB              │
+> ```
+
+---
+
+**Q: Khi user ngắt kết nối WebSocket, system làm gì?**
+
+> 1. Spring WebSocket detect `SessionDisconnectEvent` hoặc connection timeout
+> 2. `WebSocketEventListener.handleDisconnect()` được trigger
+> 3. `sessionManager.removeSession(userId, sessionId)`
+> 4. Kiểm tra nếu không còn session nào (`userSessions[userId]` empty) → user thật sự offline
+> 5. Xoá Redis key `user:status:{userId}` → status = OFFLINE
+> 6. Update `lastSeen` timestamp của user trong PostgreSQL
+> 7. Publish `user.status.changed` event → các service khác biết user offline
+>
+> **Failsafe**: TTL 5 phút trên Redis key. Nếu service crash không kịp cleanup, key tự expire → tránh user bị stuck ở trạng thái ONLINE mãi mãi.
+
+---
+
+**Q: Heartbeat / ping-pong hoạt động thế nào? Tại sao cần?**
+
+> Client gửi `{ "action": "ping" }` mỗi 30 giây, server reply `{ "type": "pong" }`. Nếu không nhận được pong sau 2 lần ping (60s) → client reconnect.
+>
+> Tại sao cần:
+> - **Detect dead connections**: TCP connection có thể bị drop ở middlebox (NAT, firewall) mà không có FIN/RST packet — server không biết client đã gone. Heartbeat phát hiện điều này.
+> - **Refresh Redis TTL**: server nhận được ping → extend TTL `user:status:{userId}` thêm 5 phút → user không bị mark offline trong khi vẫn active
+> - **Keep NAT alive**: giữ NAT table entry không expire, đặc biệt quan trọng trên mobile network
+
+---
+
+**Q: Nếu user đang online bỗng mất mạng (không có disconnect event), xử lý thế nào?**
+
+> Đây là **silent disconnect** — phổ biến trên mobile. Không có `SessionDisconnectEvent`.
+>
+> Cơ chế xử lý:
+> 1. Heartbeat timeout: nếu server không nhận ping trong 60s → server chủ động close session → trigger cleanup bình thường
+> 2. Redis TTL failsafe: `user:status:{userId}` TTL 5 phút tự expire nếu không được refresh → user trở về OFFLINE
+> 3. Tin nhắn gửi trong thời gian này: Chat Service check `sessionManager.isUserConnected(userId)` → false → route qua Message Processor → cache inbox + gửi push notification
+> 4. Khi user reconnect → nhận toàn bộ tin nhắn đã cache
+
+---
+
+**Q: Presence status (online/offline) được broadcast cho các user khác thế nào?**
+
+> 1. Khi user A connect/disconnect → publish `user.status.changed` event lên RabbitMQ queue `user.status.changed`
+> 2. Chat Service consume event → check danh sách conversations có A tham gia
+> 3. Với mỗi conversation, push `{ "type": "user_status", "userId": A, "status": "ONLINE" }` đến tất cả participants đang online qua WebSocket `/user/{participant}/queue/messages`
+> 4. Client nhận event, cập nhật UI hiển thị trạng thái
+>
+> Không broadcast toàn bộ contact list — chỉ notify những user đang có conversation active với A để tránh fanout quá lớn.
+
+---
+
+## 19. Workflow Push Notification
+
+---
+
+**Q: Mô tả toàn bộ flow push notification từ đầu đến cuối?**
+
+> ```
+> [Chat Service]    [RabbitMQ]    [Msg Processor]    [RabbitMQ]    [Notif Service]    [FCM/APNs]    [Device B]
+>       │                │               │                  │               │               │             │
+>       │─ publish ─────►│               │                  │               │               │             │
+>       │  message.sent  │─ consume ─────►                  │               │               │             │
+>       │                │               │─ isOnline(B)? ──►Redis           │               │             │
+>       │                │               │◄─ NO (no key) ───│               │               │             │
+>       │                │               │─ addToInbox(B, msgId) ──────────►Redis           │             │
+>       │                │               │─ publish ─────────────────────►│               │             │
+>       │                │               │  offline.notif  │               │               │             │
+>       │                │               │                  │─ consume ─────►               │             │
+>       │                │               │                  │               │─ getTokens(B)►Redis         │
+>       │                │               │                  │               │◄─ [token1,t2] │             │
+>       │                │               │                  │               │─ FCM API ─────►             │
+>       │                │               │                  │               │               │─ push ─────►│
+>       │                │               │                  │               │◄─ messageId ──│             │
+>       │                │               │                  │               │─ metrics++    │             │
+> ```
+
+---
+
+**Q: Khi FCM/APNs API trả về lỗi, xử lý thế nào?**
+
+> Tùy loại lỗi:
+> - **`UNREGISTERED` / `INVALID_REGISTRATION`**: token không còn valid (app uninstall, token expire) → gọi `deviceTokenService.removeToken(token)` xoá khỏi Redis Set → không gửi lại
+> - **`INTERNAL` / `UNAVAILABLE`** (FCM server error): lỗi tạm thời → retry với exponential backoff (1s, 2s, 4s)
+> - **Network timeout**: retry tối đa 3 lần → nếu vẫn fail → ghi log error, increment `notification_failed_total` metric, không crash service
+> - **`SENDER_ID_MISMATCH`**: lỗi config → alert ngay, không retry vô ích
+>
+> Nguyên tắc: **fail gracefully** — notification fail không được ảnh hưởng đến message deliver flow. User vẫn nhận được tin khi reconnect qua Redis inbox.
+
+---
+
+**Q: Device token được đăng ký và quản lý như thế nào?**
+
+> - **Đăng ký**: sau khi user login thành công, client app lấy FCM/APNs token từ device OS → gọi `POST /notifications/device-tokens` với `{ token, platform: "ANDROID"|"IOS"|"WEB" }`
+> - **Lưu trữ**: Notification Service gọi `SADD device_tokens:{userId} {token}` vào Redis với TTL 30 ngày
+> - **Gia hạn**: mỗi lần app active, refresh token (gọi register lại với same token → TTL reset)
+> - **Xoá tự động**: FCM trả về `UNREGISTERED` → remove token
+> - **Xoá thủ công**: khi user logout → gọi `DELETE /notifications/device-tokens/{token}`
+> - **Multiple devices**: mỗi device có 1 token riêng, tất cả stored trong cùng Redis Set → gửi notification đến tất cả
+
+---
+
+**Q: Tại sao message preview trong push notification bị truncate?**
+
+> FCM/APNs giới hạn payload size (APNs giới hạn 4KB, FCM 4KB). Ngoài ra:
+> - **Privacy**: user có thể đang ở chỗ đông người, hiển thị toàn bộ content trên lock screen là privacy risk
+> - **UX**: notification chỉ cần đủ để user biết ai nhắn gì, không cần full content
+>
+> Trong `MessageDeliveryProcessor.truncateContent(content)` → lấy tối đa 100 ký tự + "...". User tap notification → mở app → thấy full message.
+
+---
+
+## 20. Xử lý lỗi & Retry
+
+---
+
+**Q: Nếu MongoDB unavailable khi gửi tin nhắn, xử lý thế nào?**
+
+> 1. `ChatApplicationService.sendMessage()` gọi `messageRepository.save(message)` → MongoDB down → throw exception
+> 2. Exception propagate lên Controller → `@ExceptionHandler` bắt → trả `503 Service Unavailable` cho client
+> 3. Client nhận lỗi → hiển thị "Gửi thất bại", cho phép retry
+> 4. **Không publish RabbitMQ event** vì message chưa persist thành công — tránh receiver nhận tin nhắn "ghost"
+> 5. Circuit Breaker (Resilience4j) ở Application Service layer: nếu MongoDB fail liên tục → circuit OPEN → fail fast, không chờ timeout mỗi request
+> 6. Prometheus alert: `mongodb_connections_active = 0` → oncall nhận alert
+
+---
+
+**Q: Nếu RabbitMQ down sau khi message đã persist vào MongoDB, xử lý thế nào?**
+
+> Đây là **partial failure** — message đã lưu vào DB nhưng event chưa publish.
+>
+> Hiện tại trong project:
+> 1. `messageEventPublisher.publishMessageSent(...)` throw exception
+> 2. Vì publish event xảy ra **sau** DB persist và **ngoài** transaction, message đã commit vào MongoDB
+> 3. Sender nhận 201 OK (message saved) nhưng receiver không nhận qua WS và không có notification
+> 4. Do message đã persist, receiver vẫn có thể lấy qua REST API `GET /messages?conversationId=...`
+>
+> **Giải pháp hoàn chỉnh hơn (Outbox Pattern)**:
+> - Ghi event vào bảng `outbox_events` cùng transaction với message persist
+> - Background job đọc outbox → publish lên RabbitMQ → mark as published
+> - Đảm bảo at-least-once delivery kể cả khi RabbitMQ tạm down
+
+---
+
+**Q: Nếu PostgreSQL down trong khi update conversation metadata, xử lý thế nào?**
+
+> Flow persist trong Chat Service khi gửi message:
+> 1. Persist message content: MongoDB (primary)
+> 2. Update conversation metadata: PostgreSQL (secondary — `lastMessageId`, `unreadCount`)
+>
+> Nếu step 2 fail:
+> - Transaction rollback PostgreSQL update
+> - Nhưng MongoDB write đã commit (không rollback được — đây là tradeoff của dual DB)
+> - Message tồn tại trong MongoDB nhưng conversation metadata stale
+> - **Tác động**: conversation list của user sẽ không hiển thị tin nhắn mới nhất đúng thứ tự, nhưng khi mở conversation chat vẫn thấy message
+> - **Recovery**: Scheduled Job có thể reconcile: scan messages trong MongoDB, sync lại `lastMessageId` vào PostgreSQL
+
+---
+
+**Q: Message bị duplicate gửi (user nhấn Send 2 lần nhanh), xử lý thế nào?**
+
+> Client-side: UI disable nút Send ngay sau khi tap, enable lại sau khi nhận ACK.
+>
+> Server-side (idempotency):
+> - Client generate `clientMessageId` (UUID) và gửi kèm request
+> - Chat Service check Redis: `SET msg:dedup:{clientMessageId} 1 NX EX 300` (SET only if Not eXists, TTL 5 phút)
+> - Nếu key đã tồn tại → duplicate request → trả về 200 với message cũ, không insert mới
+> - Snowflake ID được generate server-side, không dùng clientMessageId làm primary key — đảm bảo uniqueness
+
+---
+
+**Q: Xử lý thế nào khi Message Processor crash giữa chừng lúc đang xử lý message từ RabbitMQ?**
+
+> RabbitMQ dùng **manual acknowledgement**:
+> - Message Processor nhận message từ queue nhưng **chưa ACK**
+> - Consumer xử lý: check status, cache inbox, publish notification event
+> - Chỉ gọi `channel.basicAck(deliveryTag, false)` sau khi **toàn bộ xử lý thành công**
+> - Nếu service crash trước khi ACK → RabbitMQ requeue message → consumer khác (hoặc instance restart) sẽ xử lý lại
+>
+> Điều này đảm bảo **at-least-once processing** — message có thể được xử lý nhiều hơn 1 lần nhưng không bao giờ bị lost. Cần đảm bảo xử lý **idempotent**: add to inbox dùng Redis `SADD` (set không có duplicate) nên an toàn khi xử lý lại.
+
+---
+
+**Q: Nếu Notification Service down, tin nhắn có bị mất không?**
+
+> Không. Vì dùng RabbitMQ durable queue:
+> 1. Message Processor publish `offline.notification` message lên queue `offline.notification` (durable)
+> 2. RabbitMQ persist message vào disk (durable queue + persistent delivery mode)
+> 3. Nếu Notification Service down → message nằm trong queue, không mất
+> 4. Khi Notification Service restart → tự động consume lại từ queue
+>
+> Ngoài ra, tin nhắn vẫn được cache trong Redis `inbox:{userId}` → user reconnect vẫn nhận được tin dù không có push notification.
+
+---
+
+**Q: Khi service restart (rolling update), in-flight requests xử lý thế nào?**
+
+> Dùng **Graceful Shutdown**: `server.shutdown: graceful` trong Spring Boot config.
+>
+> Khi nhận SIGTERM:
+> 1. Spring Boot stop nhận request mới (Tomcat/Netty không accept connections)
+> 2. Xử lý hết các request đang in-flight (default timeout 30s)
+> 3. Đóng connection pool, flush pending metrics
+> 4. Shutdown hoàn toàn
+>
+> Docker Compose / Kubernetes gửi SIGTERM trước, đợi `terminationGracePeriodSeconds` (mặc định 30s), rồi mới SIGKILL. Đảm bảo không có request bị cắt ngang giữa chừng.
+
+---
+
+## 21. Trường hợp đặc biệt (Edge Cases)
+
+---
+
+**Q: User A gửi tin nhắn cho chính mình (self-message) xử lý thế nào?**
+
+> `Conversation.createOneToOne()` có guard:
+> ```java
+> if (user1Id.equals(user2Id)) {
+>     throw new IllegalArgumentException("Cannot create a conversation with yourself");
+> }
+> ```
+> Domain model enforce rule này — không cần check ở controller. Trả về 400 Bad Request.
+
+---
+
+**Q: Tin nhắn rất dài (ví dụ 100MB) gửi lên, xử lý thế nào?**
+
+> - `@Valid` + `@Size(max = 65535)` trên `MessageContent` Value Object — reject khi exceed limit
+> - Nginx có `client_max_body_size` limit request body
+> - Gateway có rate limiting theo bytes (có thể config)
+> - Trước khi lưu: `MessageContent` validate format tuỳ `contentType` (TEXT khác IMAGE khác FILE)
+> - Media/file lớn nên upload qua presigned URL (S3) riêng, message chỉ chứa URL — pattern này chưa fully implemented nhưng architecture đã chuẩn bị trường `mediaUrl` trong Message domain model
+
+---
+
+**Q: User offline trong 1 năm, sau đó reconnect. Inbox xử lý thế nào?**
+
+> Redis `inbox:{userId}` có TTL 1 năm. Nếu user offline đúng 1 năm:
+> - Redis key expire → inbox bị xoá
+> - Tin nhắn cũ trong MongoDB vẫn còn (nếu trong 90 ngày retention)
+> - Khi reconnect: check inbox → empty → không deliver offline messages tự động
+> - User phải cuộn lịch sử thủ công qua REST API `GET /messages?conversationId=...`
+>
+> **99% đây là acceptable** — 1 năm inactive là edge case rất hiếm, và user sẽ scroll lại để đọc. Nếu cần nghiêm ngặt hơn: tăng TTL inbox len, hoặc khi reconnect query MongoDB trực tiếp cho messages trong 7 ngày gần nhất.
+
+---
+
+**Q: Cùng lúc 2 người gửi tin nhắn cho nhau, conversation metadata (unreadCount) có bị race condition không?**
+
+> Nguy cơ: 2 threads cùng `UPDATE conversations SET unread_count = unread_count + 1 WHERE id = ?` → race condition.
+>
+> PostgreSQL xử lý:
+> - `UPDATE ... SET unread_count = unread_count + 1` là **atomic** ở database level — PostgreSQL dùng row-level lock khi update
+> - Không cần application-level lock
+> - JPA `@Transactional` đảm bảo mỗi update là 1 transaction
+>
+> Nếu dùng Redis counter thay vì PostgreSQL: Redis `INCR` command cũng atomic (single-threaded Redis).
+
+---
+
+**Q: Multiple device: user đang dùng điện thoại và laptop cùng lúc, tin nhắn đến cả 2 không?**
+
+> Có. `WebSocketSessionManager` lưu `userId → Set<sessionId>` — mỗi device có 1 sessionId riêng.
+> `sessionManager.sendToUser(userId, destination, payload)` → Spring STOMP `SimpMessagingTemplate.convertAndSendToUser()` → gửi đến **tất cả sessions** của userId đó.
+>
+> Ngoài ra, `device_tokens:{userId}` trong Redis là Set chứa tokens của cả 2 device → push notification gửi đến cả 2 khi offline.
+
+---
+
+**Q: Message status transition sai (READ trước DELIVERED) có thể xảy ra không?**
+
+> Có thể trong distributed system. Ví dụ: network glitch khiến `message.delivered` event đến sau `message.read` event.
+>
+> Domain model `Message` có guard:
+> ```java
+> public void markAsRead() {
+>     if (this.status == MessageStatus.SENT) {
+>         // skip DELIVERED, go straight to READ
+>         this.status = MessageStatus.READ;
+>     } else if (this.status == MessageStatus.DELIVERED) {
+>         this.status = MessageStatus.READ;
+>     }
+>     // if already READ, no-op
+>     this.readAt = Instant.now();
+> }
+> ```
+> Business decision: nếu READ event arrives trước DELIVERED, nhảy thẳng lên READ. Không bao giờ downgrade từ READ về DELIVERED. Trạng thái chỉ tiến về phía trước.
+
+---
+
+**Q: Conversation giữa A và B, nếu A xoá conversation, B có bị ảnh hưởng không?**
+
+> Dùng **per-user soft delete**: `Conversation` domain model hỗ trợ `hiddenFor: Set<userId>` — khi A "xoá" conversation thì add A vào `hiddenFor`, conversation vẫn tồn tại trong DB.
+> - B không bị ảnh hưởng — conversation vẫn hiển thị bên B
+> - Nếu B nhắn tiếp cho A → conversation "hiện lại" bên A (remove A khỏi `hiddenFor`)
+> - Messages trong MongoDB không bị xoá — chỉ ẩn khỏi UI của A
+
+---
+
+## 22. Bất đồng bộ — Async Processing
+
+---
+
+**Q: Dự án này có bao nhiêu chỗ dùng bất đồng bộ? Liệt kê và giải thích tại sao?**
+
+> | Cơ chế | Nơi dùng | Lý do |  
+> |---|---|---|  
+> | RabbitMQ async event | Chat → Msg Processor → Notif Service | Decouple services, resilient, không block sender |  
+> | `@Async` thread pool | `NotificationService.sendNotification()` | FCM/APNs call I/O-bound, không block consumer thread |  
+> | `@Scheduled` background job | Cleanup jobs, OfflineMessageProcessor | Resource-intensive, chạy ngoài giờ cao điểm |  
+> | Redis Pub/Sub | Inter-instance WebSocket broadcast | Non-blocking fan-out giữa Chat Service instances |  
+> | Reactive (WebFlux) | API Gateway filter chain | Non-blocking I/O, xử lý nhiều concurrent request với ít thread |  
+> | STOMP async push | Chat Service → Client | Server push bất đồng bộ, không cần client poll |  
+
+---
+
+**Q: Vấn đề của async processing là gì? Dự án xử lý thế nào?**
+
+> Vấn đề chính:
+> 1. **Ordering không đảm bảo**: Message A sent trước B, nhưng `message.sent` event của A có thể processed sau B
+>    - Giải pháp: Snowflake ID có timestamp embedded → sort theo ID là sort theo time → client sort messages theo `sentAt`
+> 2. **Visibility khó**: khó trace request flow qua nhiều service
+>    - Giải pháp: `traceId` inject vào RabbitMQ message header → tất cả log trong pipeline có cùng `traceId`
+> 3. **Partial failure**: step 1 thành công, step 2 fail
+>    - Giải pháp: DLQ + manual ACK + retry logic
+> 4. **Backpressure**: producer nhanh hơn consumer → queue tràn
+>    - Giải pháp: RabbitMQ queue metrics (`rabbitmq_queue_messages_ready`) → auto-scale consumers khi queue depth cao
+
+---
+
+**Q: Sự khác biệt giữa `@Async` và RabbitMQ async? Khi nào dùng cái nào?**
+
+> **`@Async`** (in-process, same JVM):
+> - Chạy trên ThreadPoolExecutor trong cùng service
+> - Nếu service restart → pending tasks mất
+> - Phù hợp: task không critical, fire-and-forget trong cùng service (gửi notification, log metrics)
+> - **Không durable**
+>
+> **RabbitMQ** (out-of-process, distributed):
+> - Task persist trong queue, survive service restart
+> - Consumers ở service khác, scale độc lập
+> - Phù hợp: cross-service communication, critical business events, cần delivery guarantee
+> - **Durable**, retry-able, DLQ support
+>
+> Trong project: FCM send dùng `@Async` (ok nếu mất, user vẫn nhận qua inbox); cross-service events dùng RabbitMQ (critical).
+
+---
+
+**Q: Event ordering trong RabbitMQ có được đảm bảo không?**
+
+> **Trong 1 queue + 1 consumer**: có — FIFO.
+> **Nhiều consumer concurrent**: không đảm bảo order — message 1 và 2 cùng được consume bởi consumer A và B, B xử lý xong trước.
+>
+> Xử lý trong project:
+> - `message.events` queue có thể có nhiều consumer instances (Message Processor scale lên)
+> - Message status transition được guard trong domain model (không downgrade)
+> - Business logic idempotent: `SADD inbox:{userId} msgId` dùng Set → duplicate add an toàn
+> - Nếu cần strict ordering: dùng **consistent hashing** — route messages của cùng 1 `conversationId` đến cùng 1 consumer instance (partition by key)
+
+---
+
+**Q: Reactive programming trong Gateway có ý nghĩa gì thực tế?**
+
+> API Gateway dùng Spring WebFlux (Netty) thay vì Spring MVC (Tomcat).
+>
+> **Tomcat model**: 1 request = 1 thread. 1000 concurrent requests = 1000 threads → tốn RAM, context switching.
+> **Netty model**: event loop với vài thread, mỗi I/O operation là non-blocking. 1000 concurrent requests vẫn chỉ cần ~8 threads (event loop threads).
+>
+> Gateway là pure proxy — nhận request, validate JWT, forward. Hầu hết thời gian là waiting (network I/O). Reactive model tận dụng tốt thời gian wait này, throughput cao hơn nhiều với cùng tài nguyên.
+> 
+> `Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain)` — mỗi filter trả về Mono/Flux, chain được compose lại thành 1 reactive pipeline.
 
 ---
 
